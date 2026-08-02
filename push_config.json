@@ -1,0 +1,12 @@
+{
+  "wecom": {
+    "corpid": "",
+    "corpsecret": "",
+    "agentid": "",
+    "touser": "@all"
+  },
+  "pushplus_token": "",
+  "pushplus_topic": "",
+  "dashboard_url": "",
+  "_说明": "默认渠道=企业微信（免认证、免身份证、微信内直接显示全文）。填 wecom.corpid / corpsecret / agentid（在企业微信管理后台「我的企业→企业ID」和「应用管理→自建应用详情」获取）；touser 填 @all 或你的成员账号。留空则不推企业微信。pushplus_token 为备选渠道（需微信实名，已放弃）。dashboard_url 可选，附在推送里作为『查看完整仪表盘』链接。"
+}
