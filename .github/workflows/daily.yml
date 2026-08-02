@@ -1,0 +1,55 @@
+name: AI 日报每日推送（企业微信 + GitHub Pages）
+
+on:
+  schedule:
+    - cron: '0 0 * * *'        # UTC 00:00 = 北京时间 08:00
+  workflow_dispatch:           # 允许在 Actions 页面手动触发测试
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 拉取 + 生成仪表盘 + 推送企业微信
+        env:
+          WECOM_CORPID: ${{ secrets.WECOM_CORPID }}
+          WECOM_CORPSECRET: ${{ secrets.WECOM_CORPSECRET }}
+          WECOM_AGENTID: ${{ secrets.WECOM_AGENTID }}
+          WECOM_TOUSER: ${{ secrets.WECOM_TOUSER }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+        run: python ai_daily_push.py
+
+      - name: 准备 Pages 静态产物
+        run: mkdir -p public && cp ai_daily_dashboard.html public/index.html
+
+      - name: 上传 Pages 产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
