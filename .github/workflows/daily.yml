@@ -33,6 +33,8 @@ jobs:
           WECOM_AGENTID: ${{ secrets.WECOM_AGENTID }}
           WECOM_TOUSER: ${{ secrets.WECOM_TOUSER }}
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+
         run: python ai_daily_push.py
 
       - name: 准备 Pages 静态产物
