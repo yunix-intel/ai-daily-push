@@ -1,4 +1,5 @@
 {
+  "wecom_webhook": "",
   "wecom": {
     "corpid": "",
     "corpsecret": "",
@@ -8,5 +9,5 @@
   "pushplus_token": "",
   "pushplus_topic": "",
   "dashboard_url": "",
-  "_说明": "默认渠道=企业微信（免认证、免身份证、微信内直接显示全文）。填 wecom.corpid / corpsecret / agentid（在企业微信管理后台「我的企业→企业ID」和「应用管理→自建应用详情」获取）；touser 填 @all 或你的成员账号。留空则不推企业微信。pushplus_token 为备选渠道（需微信实名，已放弃）。dashboard_url 可选，附在推送里作为『查看完整仪表盘』链接。"
+  "_说明": "默认渠道=企业微信群机器人（推荐，无需 IP 白名单）。wecom_webhook：在企业微信里建群→群设置→添加群机器人→复制 webhook 地址（形如 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx），填到 secrets.WECOM_WEBHOOK。备选渠道=企业微信应用消息（填 wecom.corpid/corpsecret/agentid，但需要把 GitHub Actions 的动态出口 IP 加入可信IP白名单，不推荐）。pushplus_token 为第三备选（需微信实名）。dashboard_url 可选，附在推送里作为『查看完整仪表盘』链接。"
 }

@@ -242,6 +242,13 @@ def truncate_bytes(s, max_bytes):
         out.append(ch); total += b
     return "".join(out) + "\n…（完整版见仪表盘链接）"
 
+def push_wecom_webhook(webhook, markdown):
+    """企业微信群机器人 -> 个人微信。无需 access_token、无需 IP 白名单。"""
+    content = truncate_bytes(markdown, 3900)  # 群机器人 markdown 上限 4096 字节
+    payload = {"msgtype": "markdown", "markdown": {"content": content}}
+    return http_post_json(webhook, payload)
+
+
 def push_wecom(corpid, corpsecret, agentid, touser, markdown):
     """企业微信自建应用消息 -> 个人微信（无需认证、免身份证、全文）。"""
     base = os.environ.get("WECOM_BASE", "https://qyapi.weixin.qq.com").rstrip("/")
@@ -330,7 +337,19 @@ def main():
         print(md[:600])
         return
 
-    # 渠道优先级：企业微信 > pushplus
+    # 渠道优先级：企业微信群机器人 > 企业微信应用消息 > pushplus
+    webhook = (os.environ.get("WECOM_WEBHOOK") or cfg.get("wecom_webhook", "")).strip()
+    if webhook:
+        print("[4/4] 推送到企业微信群机器人（-> 个人微信）...")
+        try:
+            resp = push_wecom_webhook(webhook, md)
+            print("     企业微信返回：", resp)
+            if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
+                print("     ⚠️ 推送失败：", resp.get("errmsg"), resp)
+        except Exception as e:
+            print("     ⚠️ 企业微信群机器人推送异常：", repr(e))
+        return
+
     if corpid and corpsecret and agentid:
         print("[4/4] 推送到企业微信（应用消息 -> 个人微信）...")
         try:
