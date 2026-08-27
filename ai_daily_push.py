@@ -242,9 +242,11 @@ def truncate_bytes(s, max_bytes):
         out.append(ch); total += b
     return "".join(out) + "\n…（完整版见仪表盘链接）"
 
-def push_wecom_webhook(webhook, markdown):
+def push_wecom_webhook(webhook, markdown, dashboard_url=None):
     """企业微信群机器人 -> 个人微信。无需 access_token、无需 IP 白名单。"""
-    content = truncate_bytes(markdown, 3900)  # 群机器人 markdown 上限 4096 字节
+    # 链接放最前面，避免被 truncate 截掉（企业微信 markdown 上限 4096 字节）
+    head = f"> **[📊 查看完整仪表盘（网页版）]({dashboard_url})**\n\n" if dashboard_url else ""
+    content = truncate_bytes(head + markdown, 3900)
     payload = {"msgtype": "markdown", "markdown": {"content": content}}
     return http_post_json(webhook, payload)
 
@@ -385,7 +387,7 @@ def main():
     if webhook:
         print("[4/4] 推送到企业微信群机器人（-> 个人微信）...")
         try:
-            resp = push_wecom_webhook(webhook, md)
+            resp = push_wecom_webhook(webhook, md, dashboard_url)
             print("     企业微信返回：", resp)
             if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
                 print("     ⚠️ 推送失败：", resp.get("errmsg"), resp)
