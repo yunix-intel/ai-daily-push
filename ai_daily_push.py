@@ -243,12 +243,25 @@ def truncate_bytes(s, max_bytes):
     return "".join(out) + "\n…（完整版见仪表盘链接）"
 
 def push_wecom_webhook(webhook, markdown, dashboard_url=None):
-    """企业微信群机器人 -> 个人微信。无需 access_token、无需 IP 白名单。"""
-    # 链接放最前面，避免被 truncate 截掉（企业微信 markdown 上限 4096 字节）
-    head = f"> **[📊 查看完整仪表盘（网页版）]({dashboard_url})**\n\n" if dashboard_url else ""
-    content = truncate_bytes(head + markdown, 3900)
-    payload = {"msgtype": "markdown", "markdown": {"content": content}}
-    return http_post_json(webhook, payload)
+    """企业微信群机器人 -> 个人微信。无需 access_token、无需 IP 白名单。
+    发两条：① news 图文卡片（按钮卡片，点击打开完整仪表盘网页）② markdown 摘要。"""
+    results = []
+    if dashboard_url:
+        news = {
+            "msgtype": "news",
+            "news": {
+                "articles": [{
+                    "title": "📊 查看完整仪表盘（网页版）",
+                    "description": "AI 日报 · 全部版块 · 卡片式网页，点击打开",
+                    "url": dashboard_url,
+                    "picurl": "",
+                }]
+            },
+        }
+        results.append(http_post_json(webhook, news))
+    content = truncate_bytes(markdown, 3900)  # 群机器人 markdown 上限 4096 字节
+    results.append(http_post_json(webhook, {"msgtype": "markdown", "markdown": {"content": content}}))
+    return results
 
 
 def push_feishu(webhook, title, markdown, dashboard_url=None):
@@ -389,8 +402,9 @@ def main():
         try:
             resp = push_wecom_webhook(webhook, md, dashboard_url)
             print("     企业微信返回：", resp)
-            if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
-                print("     ⚠️ 推送失败：", resp.get("errmsg"), resp)
+            failed = [r for r in resp if isinstance(r, dict) and r.get("errcode", 0) != 0]
+            if failed:
+                print("     ⚠️ 推送失败：", failed)
         except Exception as e:
             print("     ⚠️ 企业微信群机器人推送异常：", repr(e))
         return
