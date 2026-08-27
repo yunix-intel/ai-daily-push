@@ -249,6 +249,35 @@ def push_wecom_webhook(webhook, markdown):
     return http_post_json(webhook, payload)
 
 
+def push_feishu(webhook, title, markdown, dashboard_url=None):
+    """飞书群机器人（interactive 卡片）-> 飞书个人。无需 IP 白名单。"""
+    elements = [
+        {"tag": "h1", "content": title},
+        {"tag": "div", "text": {"tag": "markdown", "content": truncate_bytes(markdown, 3800)}},
+    ]
+    if dashboard_url:
+        elements.append({
+            "tag": "action",
+            "actions": [{
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": "📊 查看完整网页"},
+                "type": "primary",
+                "url": dashboard_url,
+            }],
+        })
+    payload = {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "template": "blue",
+                "title": {"tag": "plain_text", "content": "AI 日报 · " + title},
+            },
+            "elements": elements,
+        },
+    }
+    return http_post_json(webhook, payload)
+
+
 def push_wecom(corpid, corpsecret, agentid, touser, markdown):
     """企业微信自建应用消息 -> 个人微信（无需认证、免身份证、全文）。"""
     base = os.environ.get("WECOM_BASE", "https://qyapi.weixin.qq.com").rstrip("/")
@@ -337,8 +366,22 @@ def main():
         print(md[:600])
         return
 
-    # 渠道优先级：企业微信群机器人 > 企业微信应用消息 > pushplus
+    # 渠道优先级：企业微信群机器人 > 飞书群机器人 > 企业微信应用消息 > pushplus
     webhook = (os.environ.get("WECOM_WEBHOOK") or cfg.get("wecom_webhook", "")).strip()
+    feishu_webhook = (os.environ.get("FEISHU_WEBHOOK") or cfg.get("feishu_webhook", "")).strip()
+
+    if feishu_webhook:
+        print("[4/4] 推送到飞书群机器人（-> 飞书个人）...")
+        title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
+        try:
+            resp = push_feishu(feishu_webhook, title, md, dashboard_url)
+            print("     飞书返回：", resp)
+            if isinstance(resp, dict) and resp.get("StatusCode") != 0:
+                print("     ⚠️ 推送失败：", resp.get("msg"), resp)
+        except Exception as e:
+            print("     ⚠️ 飞书推送异常：", repr(e))
+        return
+
     if webhook:
         print("[4/4] 推送到企业微信群机器人（-> 个人微信）...")
         try:

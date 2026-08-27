@@ -34,6 +34,7 @@ jobs:
           WECOM_TOUSER: ${{ secrets.WECOM_TOUSER }}
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
 
         run: python ai_daily_push.py
 
