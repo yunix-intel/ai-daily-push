@@ -25,7 +25,7 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 
 注意：网络请求在受限环境下需放行外网（本机直跑即可）。
 """
-import json, sys, os, re, urllib.request, urllib.error
+import json, sys, os, re, html, urllib.parse, urllib.request, urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
@@ -119,6 +119,36 @@ def aggregate_sources(primary):
             target.append({"title": item["title"], "summary": item["summary"], "source": {"name": item["source"]}, "links": {"original": item["link"], "aihot": item["link"]}})
     return {"date": primary.get("date", ""), "windowStart": primary.get("windowStart", ""), "windowEnd": primary.get("windowEnd", ""), "generatedAt": primary.get("generatedAt", ""), "attribution": primary.get("attribution", {}), "links": primary.get("links", {}), "sections": sections}
 
+TRANSLATE_API = "https://translate.googleapis.com/translate_a/single"
+
+
+def translate_text(text, target="zh-CN"):
+    if not text or not re.search(r"[A-Za-z]", text):
+        return text
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()[:1800]
+    query = urllib.parse.urlencode({"client": "gtx", "sl": "auto", "tl": target, "dt": "t", "q": text})
+    req = urllib.request.Request(f"{TRANSLATE_API}?{query}", headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=20) as response:
+        translated = json.loads(response.read().decode("utf-8"))
+    return "".join(part[0] for part in translated[0] if part and part[0]).strip()
+
+
+def translate_items(report):
+    translated = 0
+    for section in report.get("sections", []):
+        for item in section.get("items", []):
+            item["originalTitle"] = item.get("title", "")
+            item["originalSummary"] = item.get("summary", "")
+            try:
+                item["title"] = translate_text(item["title"])
+                item["summary"] = translate_text(item["summary"])
+                translated += 1
+            except Exception as exc:
+                print(f"     翻译失败，保留英文原文：{exc}")
+    print(f"     翻译完成：{translated} 条")
+    return report
+
 # ----------------------------- 数据整形 -----------------------------
 def shape(report):
     sections, gi = [], 0
@@ -129,7 +159,9 @@ def shape(report):
             its.append({
                 "idx": gi,
                 "title": it.get("title", ""),
+                "originalTitle": it.get("originalTitle", it.get("title", "")),
                 "summary": it.get("summary", ""),
+                "originalSummary": it.get("originalSummary", it.get("summary", "")),
                 "source": it.get("source", {}).get("name", ""),
                 "original": it.get("links", {}).get("original", ""),
                 "aihot": it.get("links", {}).get("aihot", ""),
@@ -189,7 +221,8 @@ HTML_TMPL = r"""<!DOCTYPE html>
   .chip{font-size:12px;color:var(--muted);background:var(--chip);border:1px solid var(--border);padding:4px 10px;border-radius:999px;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .card h3{font-size:16.5px;font-weight:700;line-height:1.45;margin-bottom:9px}
   .card h3 a:hover{color:var(--accent)}
-  .card .summary{font-size:14px;color:#c4ccd8;flex:1;margin-bottom:14px}
+  .card .summary{font-size:14px;color:#c4ccd8;flex:1;margin-bottom:10px}
+  .card .original-text{font-size:12.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;margin-bottom:14px}
   .card .foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
   .src{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .orig{font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--border);padding:6px 12px;border-radius:10px;background:var(--bg2);white-space:nowrap;transition:.15s}
@@ -233,7 +266,8 @@ function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>
     s.items.forEach(it=>{const orig=it.original||it.aihot||'#';const tl=it.aihot||it.original||'#';
       main+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
       main+='<h3><a href="'+esc(tl)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
-      main+='<p class="summary">'+esc(truncate(it.summary,60))+'</p>';
+      main+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
+      if(it.originalTitle!==it.title||it.originalSummary!==it.summary) main+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+'</p>';
       main+='<div class="foot"><span class="src">'+esc(it.source)+'</span><a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></div></article>';});
     main+='</div></section>';});
   document.getElementById('main').innerHTML=main;
@@ -259,8 +293,10 @@ def build_markdown(data, dashboard_url):
         lines.append(f"## {s['label']}（{len(s['items'])}）")
         for it in s["items"]:
             link = it["original"] or it["aihot"] or "#"
-            title = it["title"].replace("[", "【").replace("]", "】")  # 避免破坏 md 链接
+            title = it["title"].replace("[", "【").replace("]", "】")
             lines.append(f"> **{it['idx']}.** [{title}]({link})　*— {it['source']}*")
+            if it.get("originalTitle") and it["originalTitle"] != it["title"]:
+                lines.append(f"> English: {it['originalTitle']}")
     if dashboard_url:
         lines.append(f"\n[📊 查看完整仪表盘]({dashboard_url})")
     else:
@@ -419,6 +455,7 @@ def main():
     if fell_back:
         print(f"     当日未生成，已回退到最近一期：{used_date}")
     combined_report = aggregate_sources(raw["report"])
+    combined_report = translate_items(combined_report)
     data = shape(combined_report)
     print(f"     成功：共 {data['meta']['total']} 条，版块 {[s['label'] for s in data['sections']]}")
 

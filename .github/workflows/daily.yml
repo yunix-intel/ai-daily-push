@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 拉取 + 生成仪表盘 + 推送企业微信
+      - name: 拉取 + 翻译 + 生成仪表盘 + 推送企业微信
         env:
           WECOM_CORPID: ${{ secrets.WECOM_CORPID }}
           WECOM_CORPSECRET: ${{ secrets.WECOM_CORPSECRET }}
