@@ -218,6 +218,42 @@ def translate_items(report):
     print(f"     翻译完成：{translated} 条，失败：{failed} 条")
     return report
 
+# ----------------------------- 重要新闻打分 -----------------------------
+# 没有编辑排序信号可用（RSS 只有时间顺序），用启发式打分挑「今日重点」：
+# 大公司/大产品名 + 重大事件关键词命中越多分越高；同分按原始序号靠前优先。
+COMPANY_WEIGHTS = {
+    "OpenAI": 3, "Anthropic": 3, "Google": 3, "DeepMind": 3, "Microsoft": 3, "Meta": 3,
+    "xAI": 3, "Nvidia": 3, "Amazon": 3, "Apple": 3,
+    "Claude": 2, "ChatGPT": 2, "Gemini": 2, "Grok": 2, "Llama": 2, "Mistral": 2,
+}
+EVENT_KEYWORDS = [
+    "融资", "收购", "诉讼", "发布", "上市", "裁员", "突破", "首个", "全球首",
+    "亿美元", "估值", "封杀", "禁令", "漏洞", "攻击", "事故", "IPO",
+]
+
+
+def _score_importance(text, section_label):
+    score = 0.0
+    for term, weight in COMPANY_WEIGHTS.items():
+        pattern = re.compile(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])", re.IGNORECASE)
+        if pattern.search(text):
+            score += weight
+    for kw in EVENT_KEYWORDS:
+        if kw in text:
+            score += 2
+    if section_label and section_label != EXTRA_SECTION_LABEL:
+        score += 1  # AI HOT 自身分类版块比"全网 AI 资讯"兜底桶更可信
+    return score
+
+
+def pick_highlights(flat_items, top_n=5):
+    """flat_items: [(entry_dict, section_label), ...]。按打分+原始序号排序取前 N 条。"""
+    ranked = sorted(
+        flat_items,
+        key=lambda pair: (-_score_importance(pair[0]["title"] + " " + pair[0].get("originalTitle", ""), pair[1]), pair[0]["idx"]),
+    )
+    return [entry for entry, _label in ranked[:top_n]]
+
 # ----------------------------- 数据整形 -----------------------------
 def translate_page_url(original_url):
     """用 Google 翻译的网页代理把英文原文整页翻译成中文；只在原文确实是英文时生成。"""
@@ -228,7 +264,9 @@ def translate_page_url(original_url):
 
 def shape(report):
     sections, gi = [], 0
+    flat_for_ranking = []
     for s in report.get("sections", []):
+        label = s.get("label", "")
         its = []
         for it in s.get("items", []):
             gi += 1
@@ -236,7 +274,7 @@ def shape(report):
             original_title = it.get("originalTitle", title)
             original_link = it.get("links", {}).get("original", "")
             is_translated = bool(original_title) and original_title != title
-            its.append({
+            entry = {
                 "idx": gi,
                 "title": title,
                 "originalTitle": original_title,
@@ -246,8 +284,10 @@ def shape(report):
                 "original": original_link,
                 "aihot": it.get("links", {}).get("aihot", ""),
                 "translatedPage": translate_page_url(original_link) if is_translated else "",
-            })
-        sections.append({"label": s.get("label", ""), "items": its})
+            }
+            its.append(entry)
+            flat_for_ranking.append((entry, label))
+        sections.append({"label": label, "items": its})
     meta = {
         "date": report.get("date", ""),
         "windowStart": report.get("windowStart", ""),
@@ -257,7 +297,8 @@ def shape(report):
         "source": report.get("attribution", {}),
         "dailyUrl": report.get("links", {}).get("aihot", ""),
     }
-    return {"meta": meta, "sections": sections}
+    highlights = pick_highlights(flat_for_ranking, top_n=min(5, gi)) if gi else []
+    return {"meta": meta, "sections": sections, "highlights": highlights}
 
 # ----------------------------- HTML 生成 -----------------------------
 HTML_TMPL = r"""<!DOCTYPE html>
@@ -313,6 +354,15 @@ HTML_TMPL = r"""<!DOCTYPE html>
   footer .wrap{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;justify-content:space-between}
   footer a{color:var(--accent);border-bottom:1px dotted var(--accent)}
   .note{font-size:12.5px;color:#6f7a8a;margin-top:10px;width:100%}
+  .highlights{margin:26px 0 6px;background:linear-gradient(135deg,#1c2740,#171c26);border:1px solid var(--accent);border-radius:16px;padding:20px 22px}
+  .highlights h2{font-size:18px;font-weight:800;color:var(--accent2);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .highlights ol{list-style:none;counter-reset:hl}
+  .highlights li{counter-increment:hl;display:flex;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border)}
+  .highlights li:last-child{border-bottom:none}
+  .highlights li::before{content:counter(hl);flex:0 0 auto;width:22px;height:22px;border-radius:6px;background:var(--accent);color:#0c1320;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
+  .highlights a{font-size:14.5px;font-weight:600}
+  .highlights a:hover{color:var(--accent)}
+  .highlights .hl-src{font-size:12px;color:var(--muted);margin-left:6px}
   @media (max-width:560px){.hero{padding:38px 0 22px}.grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -323,6 +373,10 @@ HTML_TMPL = r"""<!DOCTYPE html>
   <div class="date" id="heroDate">—</div>
   <div class="window" id="heroWindow">—</div>
   <div class="stats" id="heroStats"></div>
+  <div class="highlights" id="highlights" style="display:none">
+    <h2>⭐ 今日重要新闻</h2>
+    <ol id="highlightsList"></ol>
+  </div>
 </div></header>
 <nav class="nav"><div class="wrap" id="navLinks"></div></nav>
 <main class="wrap" id="main"></main>
@@ -343,6 +397,14 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   let st='<div class="stat total"><div class="num">'+meta.total+'</div><div class="lbl">总条数</div></div>';
   sections.forEach(s=>{st+='<div class="stat"><div class="num">'+s.items.length+'</div><div class="lbl">'+esc(s.label)+'</div></div>';});
   document.getElementById('heroStats').innerHTML=st;
+  const highlights=DATA.highlights||[];
+  if(highlights.length){
+    document.getElementById('highlights').style.display='';
+    document.getElementById('highlightsList').innerHTML=highlights.map(it=>{
+      const tl=safeUrl(it.aihot||it.original||'#');
+      return '<li><a href="'+esc(tl)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a><span class="hl-src">— '+esc(it.source)+'</span></li>';
+    }).join('');
+  }
   let nav='';sections.forEach((s,i)=>{nav+='<a href="#sec-'+i+'">'+esc(s.label)+'<b>'+s.items.length+'</b></a>';});
   document.getElementById('navLinks').innerHTML=nav;
   let main='';sections.forEach((s,i)=>{main+='<section class="section" id="sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
@@ -378,12 +440,19 @@ def safe_md_url(url):
 # ----------------------------- Markdown 摘要 -----------------------------
 def build_markdown(data, dashboard_url):
     meta, sections = data["meta"], data["sections"]
+    highlights = data.get("highlights", [])
     date_human = fmt_cst(meta["date"] + "T00:00:00+08:00", "%Y年%m月%d日 {wd}")
     ws = fmt_cst(meta["windowStart"], "%m/%d %H:%M")
     we = fmt_cst(meta["windowEnd"], "%m/%d %H:%M")
     lines = []
     lines.append(f"# AI 日报 · {date_human}")
     lines.append(f"> 总条数 **{meta['total']}** · 收录窗口 {ws}–{we}（北京时间）")
+    if highlights:
+        lines.append("\n## ⭐ 今日重要新闻")
+        for it in highlights:
+            link = safe_md_url(it["original"] or it["aihot"] or "#")
+            title = it["title"].replace("[", "【").replace("]", "】")
+            lines.append(f"> **{it['idx']}.** [{title}]({link})　*— {it['source']}*")
     for s in sections:
         lines.append(f"## {s['label']}（{len(s['items'])}）")
         for it in s["items"]:
