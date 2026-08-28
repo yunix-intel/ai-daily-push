@@ -254,7 +254,7 @@ def push_wecom_webhook(webhook, markdown, dashboard_url=None):
                     "title": "📊 查看完整仪表盘（网页版）",
                     "description": "AI 日报 · 全部版块 · 卡片式网页，点击打开",
                     "url": dashboard_url,
-                    "picurl": "",
+                    "picurl": "https://picsum.photos/id/1015/600/400",
                 }]
             },
         }
