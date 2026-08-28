@@ -4,9 +4,10 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 
 流程：
   1. 拉取 AI HOT 当日日报；若当日未生成则回退到最近一期（按官方 skill 规则）。
-  2. 生成单文件 HTML 仪表盘（内联 CSS/JS，五版块，全局连续编号，≤60 字摘要，北京时间）。
-  3. 渲染 Markdown 摘要（五版块要点 + 原文链接）。
-  4. 推送 markdown 消息到 pushplus，再由 pushplus 转发到你的个人微信；
+  2. 同步抓取多个 AI 资讯 RSS 来源，去重后合并到仪表盘。
+  3. 生成单文件 HTML 仪表盘（内联 CSS/JS，五版块，全局连续编号，≤60 字摘要，北京时间）。
+  4. 渲染 Markdown 摘要（五版块要点 + 原文链接）。
+  5. 推送 markdown 消息到 pushplus，再由 pushplus 转发到你的个人微信；
      若配置了 dashboard_url 则附上仪表盘链接。
 
 配置：同目录 push_config.json
@@ -24,7 +25,8 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 
 注意：网络请求在受限环境下需放行外网（本机直跑即可）。
 """
-import json, sys, os, urllib.request, urllib.error
+import json, sys, os, re, urllib.request, urllib.error
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
 BASE = "https://aihot.virxact.com/api/v1"
@@ -63,6 +65,59 @@ def fetch_daily(date_str):
     d2 = latest.get("date")
     data2 = http_get(f"{BASE}/dailies/{d2}")
     return data2, d2, True
+
+# ----------------------------- 多来源聚合 -----------------------------
+RSS_FEEDS = [
+    ("VentureBeat AI", "https://venturebeat.com/category/ai/feed/"),
+    ("Hugging Face Blog", "https://huggingface.co/blog/feed.xml"),
+    ("arXiv cs.AI", "https://rss.arxiv.org/rss/cs.AI"),
+    ("TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/"),
+]
+
+
+def fetch_rss(source_name, url, limit=8):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/rss+xml, application/atom+xml, application/xml"})
+    with urllib.request.urlopen(req, timeout=30) as response:
+        root = ET.fromstring(response.read())
+    entries = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+    result = []
+    for entry in entries[:limit]:
+        def text(*names):
+            for name in names:
+                node = entry.find(name)
+                if node is not None and node.text:
+                    return re.sub(r"<[^>]+>", " ", node.text).strip()
+            return ""
+        link = text("link", "{http://www.w3.org/2005/Atom}link")
+        atom_link = entry.find("{http://www.w3.org/2005/Atom}link")
+        if atom_link is not None:
+            link = atom_link.get("href", link)
+        result.append({"title": text("title", "{http://www.w3.org/2005/Atom}title"), "summary": text("description", "summary", "{http://www.w3.org/2005/Atom}summary"), "link": link, "source": source_name})
+    return result
+
+
+def aggregate_sources(primary):
+    sections = [{"label": s.get("label", ""), "items": list(s.get("items", []))} for s in primary.get("sections", [])]
+    extra_items = []
+    for source_name, url in RSS_FEEDS:
+        try:
+            source_items = fetch_rss(source_name, url)
+            extra_items.extend(source_items)
+            print(f"     {source_name}：抓取 {len(source_items)} 条")
+        except Exception as exc:
+            print(f"     来源跳过：{source_name}（{exc}）")
+    if extra_items:
+        sections.append({"label": "全网 AI 资讯", "items": []})
+    if not sections:
+        sections = [{"label": "全网 AI 资讯", "items": []}]
+    seen = {re.sub(r"\W+", "", item.get("title", "").lower()) for section in sections for item in section["items"]}
+    target = sections[-1]["items"]
+    for item in extra_items:
+        key = re.sub(r"\W+", "", item["title"].lower())
+        if item["title"] and key and key not in seen:
+            seen.add(key)
+            target.append({"title": item["title"], "summary": item["summary"], "source": {"name": item["source"]}, "links": {"original": item["link"], "aihot": item["link"]}})
+    return {"date": primary.get("date", ""), "windowStart": primary.get("windowStart", ""), "windowEnd": primary.get("windowEnd", ""), "generatedAt": primary.get("generatedAt", ""), "attribution": primary.get("attribution", {}), "links": primary.get("links", {}), "sections": sections}
 
 # ----------------------------- 数据整形 -----------------------------
 def shape(report):
@@ -148,7 +203,7 @@ HTML_TMPL = r"""<!DOCTYPE html>
 </head>
 <body>
 <header class="hero"><div class="wrap">
-  <span class="kicker">● AI HOT 每日精选</span>
+  <span class="kicker">● AI 日报 · 多来源聚合</span>
   <h1>AI 日报 <span class="sub">晨报仪表盘</span></h1>
   <div class="date" id="heroDate">—</div>
   <div class="window" id="heroWindow">—</div>
@@ -158,7 +213,7 @@ HTML_TMPL = r"""<!DOCTYPE html>
 <main class="wrap" id="main"></main>
 <footer><div class="wrap">
   <div id="footerMeta">—</div>
-  <div class="note">本站仅作信息聚合展示，资讯内容版权归原作者所有；数据由 AI HOT 提供，引用请以第三方原文为准。</div>
+  <div class="note">本站仅作信息聚合展示，资讯内容版权归原作者所有；数据来自 AI HOT 及各资讯源的公开 RSS，引用请以第三方原文为准。</div>
 </div></footer>
 <script>
 const DATA = __DATA__;
@@ -183,7 +238,7 @@ function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>
     main+='</div></section>';});
   document.getElementById('main').innerHTML=main;
   const sn=(meta.source&&meta.source.name)||'AI HOT', su=(meta.source&&meta.source.url)||meta.dailyUrl||'https://aihot.virxact.com';
-  document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：<a href="'+esc(su)+'" target="_blank" rel="noopener noreferrer">'+esc(sn)+'</a> · 日报主页：<a href="'+esc(meta.dailyUrl)+'" target="_blank" rel="noopener noreferrer">'+esc(meta.dailyUrl)+'</a>';
+  document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：AI HOT、VentureBeat AI、Hugging Face Blog、arXiv cs.AI、TechCrunch AI · 日报主页：<a href="'+esc(meta.dailyUrl)+'" target="_blank" rel="noopener noreferrer">'+esc(meta.dailyUrl)+'</a>';
 })();
 </script>
 </body></html>"""
@@ -363,7 +418,8 @@ def main():
     raw, used_date, fell_back = fetch_daily(date_str)
     if fell_back:
         print(f"     当日未生成，已回退到最近一期：{used_date}")
-    data = shape(raw["report"])
+    combined_report = aggregate_sources(raw["report"])
+    data = shape(combined_report)
     print(f"     成功：共 {data['meta']['total']} 条，版块 {[s['label'] for s in data['sections']]}")
 
     print("[2/4] 生成 HTML 仪表盘 ...")
