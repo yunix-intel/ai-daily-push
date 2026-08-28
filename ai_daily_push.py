@@ -96,6 +96,8 @@ def fetch_rss(source_name, url, limit=8):
     return result
 
 
+EXTRA_SECTION_LABEL = "全网 AI 资讯"
+
 def aggregate_sources(primary):
     sections = [{"label": s.get("label", ""), "items": list(s.get("items", []))} for s in primary.get("sections", [])]
     extra_items = []
@@ -106,12 +108,14 @@ def aggregate_sources(primary):
             print(f"     {source_name}：抓取 {len(source_items)} 条")
         except Exception as exc:
             print(f"     来源跳过：{source_name}（{exc}）")
-    if extra_items:
-        sections.append({"label": "全网 AI 资讯", "items": []})
-    if not sections:
-        sections = [{"label": "全网 AI 资讯", "items": []}]
+    # 若主源已有同名版块（如 AI HOT 恰好也用了这个标签），合并进去而不是新建重复标签
+    target_section = next((s for s in sections if s["label"] == EXTRA_SECTION_LABEL), None)
+    if target_section is None:
+        target_section = {"label": EXTRA_SECTION_LABEL, "items": []}
+        if extra_items or not sections:
+            sections.append(target_section)
     seen = {re.sub(r"\W+", "", item.get("title", "").lower()) for section in sections for item in section["items"]}
-    target = sections[-1]["items"]
+    target = target_section["items"]
     for item in extra_items:
         key = re.sub(r"\W+", "", item["title"].lower())
         if item["title"] and key and key not in seen:
