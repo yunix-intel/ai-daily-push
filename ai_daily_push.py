@@ -314,16 +314,16 @@ HTML_TMPL = r"""<!DOCTYPE html>
   body{background:radial-gradient(1200px 600px at 80% -10%, #1a2233 0%, var(--bg) 55%) fixed;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
   a{color:inherit;text-decoration:none}
   .wrap{max-width:1180px;margin:0 auto;padding:0 18px}
-  .hero{padding:54px 0 30px}
+  .hero{padding:30px 0 16px}
   .kicker{display:inline-flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.18em;color:var(--accent2);text-transform:uppercase;border:1px solid var(--border);padding:5px 12px;border-radius:999px;background:var(--bg2)}
-  .hero h1{font-size:clamp(30px,5vw,52px);font-weight:800;margin:16px 0 6px;letter-spacing:-.5px}
+  .hero h1{font-size:clamp(24px,4vw,36px);font-weight:800;margin:12px 0 4px;letter-spacing:-.5px}
   .hero h1 .sub{color:var(--accent)}
-  .hero .date{font-size:18px;color:var(--text);font-weight:600}
-  .hero .window{font-size:14px;color:var(--muted);margin-top:4px}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-top:26px}
-  .stat{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px 18px}
-  .stat .num{font-size:30px;font-weight:800;color:var(--accent)}
-  .stat .lbl{font-size:13px;color:var(--muted);margin-top:2px}
+  .hero .date{font-size:15px;color:var(--text);font-weight:600}
+  .hero .window{font-size:13px;color:var(--muted);margin-top:2px}
+  .stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+  .stat{display:inline-flex;align-items:baseline;gap:5px;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:5px 12px}
+  .stat .num{font-size:14px;font-weight:800;color:var(--accent)}
+  .stat .lbl{font-size:12px;color:var(--muted)}
   .stat.total .num{color:var(--accent2)}
   .nav{position:sticky;top:0;z-index:20;background:rgba(14,16,20,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);margin-top:14px}
   .nav .wrap{display:flex;gap:10px;overflow-x:auto;padding:12px 18px;scrollbar-width:thin}
@@ -354,16 +354,16 @@ HTML_TMPL = r"""<!DOCTYPE html>
   footer .wrap{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;justify-content:space-between}
   footer a{color:var(--accent);border-bottom:1px dotted var(--accent)}
   .note{font-size:12.5px;color:#6f7a8a;margin-top:10px;width:100%}
-  .highlights{margin:26px 0 6px;background:linear-gradient(135deg,#1c2740,#171c26);border:1px solid var(--accent);border-radius:16px;padding:20px 22px}
-  .highlights h2{font-size:18px;font-weight:800;color:var(--accent2);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .highlights{margin:14px 0 4px;background:linear-gradient(135deg,#1c2740,#171c26);border:1px solid var(--accent);border-radius:12px;padding:12px 16px}
+  .highlights h2{font-size:14px;font-weight:800;color:var(--accent2);margin-bottom:6px;display:flex;align-items:center;gap:6px}
   .highlights ol{list-style:none;counter-reset:hl}
-  .highlights li{counter-increment:hl;display:flex;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border)}
+  .highlights li{counter-increment:hl;display:flex;gap:8px;padding:4px 0;border-bottom:1px dashed var(--border)}
   .highlights li:last-child{border-bottom:none}
-  .highlights li::before{content:counter(hl);flex:0 0 auto;width:22px;height:22px;border-radius:6px;background:var(--accent);color:#0c1320;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
-  .highlights a{font-size:14.5px;font-weight:600}
+  .highlights li::before{content:counter(hl);flex:0 0 auto;width:18px;height:18px;border-radius:5px;background:var(--accent);color:#0c1320;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .highlights a{font-size:13.5px;font-weight:600}
   .highlights a:hover{color:var(--accent)}
-  .highlights .hl-src{font-size:12px;color:var(--muted);margin-left:6px}
-  @media (max-width:560px){.hero{padding:38px 0 22px}.grid{grid-template-columns:1fr}}
+  .highlights .hl-src{font-size:11.5px;color:var(--muted);margin-left:6px}
+  @media (max-width:560px){.hero{padding:22px 0 12px}.grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
