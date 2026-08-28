@@ -304,6 +304,17 @@ def build_html(data):
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
     return HTML_TMPL.replace("__DATA__", payload)
 
+def safe_md_url(url):
+    """只放行 http/https，并转义会破坏 markdown 链接语法的字符，
+    防止不可信 RSS 来源的 link 字段注入第二个链接或 javascript: 协议。"""
+    url = (url or "").strip()
+    scheme = url.split(":", 1)[0].lower() if ":" in url else ""
+    if scheme not in ("http", "https"):
+        return "#"
+    for ch, enc in ((")", "%29"), ("(", "%28"), (" ", "%20"), ("\n", ""), ("\r", "")):
+        url = url.replace(ch, enc)
+    return url
+
 # ----------------------------- Markdown 摘要 -----------------------------
 def build_markdown(data, dashboard_url):
     meta, sections = data["meta"], data["sections"]
@@ -316,15 +327,15 @@ def build_markdown(data, dashboard_url):
     for s in sections:
         lines.append(f"## {s['label']}（{len(s['items'])}）")
         for it in s["items"]:
-            link = it["original"] or it["aihot"] or "#"
+            link = safe_md_url(it["original"] or it["aihot"] or "#")
             title = it["title"].replace("[", "【").replace("]", "】")
             lines.append(f"> **{it['idx']}.** [{title}]({link})　*— {it['source']}*")
             if it.get("originalTitle") and it["originalTitle"] != it["title"]:
                 lines.append(f"> English: {it['originalTitle']}")
     if dashboard_url:
-        lines.append(f"\n[📊 查看完整仪表盘]({dashboard_url})")
+        lines.append(f"\n[📊 查看完整仪表盘]({safe_md_url(dashboard_url)})")
     else:
-        lines.append(f"\n[📊 AI HOT 日报主页]({meta['dailyUrl']})")
+        lines.append(f"\n[📊 AI HOT 日报主页]({safe_md_url(meta['dailyUrl'])})")
     return "\n".join(lines)
 
 def fmt_cst(iso, fmt):
