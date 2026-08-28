@@ -360,17 +360,27 @@ def http_post_json(url, payload, timeout=30):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
-def truncate_bytes(s, max_bytes):
-    """按字符截断，保证 UTF-8 字节数 <= max_bytes，避免截断半个中文字。"""
-    if len(s.encode("utf-8")) <= max_bytes:
-        return s
+def _truncate_by_bytes(s, max_bytes):
+    """按字符截断到 UTF-8 字节数 <= max_bytes，不截断半个字符，max_bytes<=0 时返回空串。"""
+    if max_bytes <= 0:
+        return ""
     out, total = [], 0
     for ch in s:
         b = len(ch.encode("utf-8"))
         if total + b > max_bytes:
             break
         out.append(ch); total += b
-    return "".join(out) + "\n…（完整版见仪表盘链接）"
+    return "".join(out)
+
+def truncate_bytes(s, max_bytes):
+    """截断到 UTF-8 字节数 <= max_bytes（含省略提示），避免截断半个中文字。"""
+    if len(s.encode("utf-8")) <= max_bytes:
+        return s
+    suffix = "\n…（完整版见仪表盘链接）"
+    budget = max_bytes - len(suffix.encode("utf-8"))
+    if budget <= 0:
+        return _truncate_by_bytes(suffix.strip(), max_bytes)
+    return _truncate_by_bytes(s, budget) + suffix
 
 def push_wecom_webhook(webhook, markdown, dashboard_url=None):
     """企业微信群机器人 -> 个人微信。无需 access_token、无需 IP 白名单。
