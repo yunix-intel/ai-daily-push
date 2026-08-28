@@ -275,6 +275,7 @@ const DATA = __DATA__;
 function fmtBeijing(iso, opts){try{const dt=new Date(iso);const o=Object.assign({timeZone:'Asia/Shanghai',hour12:false},opts||{});return new Intl.DateTimeFormat('zh-CN',o).format(dt);}catch(e){return iso;}}
 function truncate(s,n){const arr=Array.from(s||'');if(arr.length<=n)return s||'';return arr.slice(0,n-1).join('')+'…';}
 function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='http:'||p==='https:')?u:'#';}catch(e){return '#';}}
 (function render(){
   const meta=DATA.meta, sections=DATA.sections;
   document.getElementById('heroDate').textContent=fmtBeijing(meta.date+'T00:00:00+08:00',{year:'numeric',month:'long',day:'numeric',weekday:'long'})+'（北京时间）';
@@ -285,7 +286,7 @@ function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>
   let nav='';sections.forEach((s,i)=>{nav+='<a href="#sec-'+i+'">'+esc(s.label)+'<b>'+s.items.length+'</b></a>';});
   document.getElementById('navLinks').innerHTML=nav;
   let main='';sections.forEach((s,i)=>{main+='<section class="section" id="sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
-    s.items.forEach(it=>{const orig=it.original||it.aihot||'#';const tl=it.aihot||it.original||'#';
+    s.items.forEach(it=>{const orig=safeUrl(it.original||it.aihot||'#');const tl=safeUrl(it.aihot||it.original||'#');
       main+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
       main+='<h3><a href="'+esc(tl)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
       main+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
@@ -294,13 +295,14 @@ function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>
     main+='</div></section>';});
   document.getElementById('main').innerHTML=main;
   const sn=(meta.source&&meta.source.name)||'AI HOT', su=(meta.source&&meta.source.url)||meta.dailyUrl||'https://aihot.virxact.com';
-  document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：AI HOT、VentureBeat AI、Hugging Face Blog、arXiv cs.AI、TechCrunch AI · 日报主页：<a href="'+esc(meta.dailyUrl)+'" target="_blank" rel="noopener noreferrer">'+esc(meta.dailyUrl)+'</a>';
+  document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：AI HOT、VentureBeat AI、Hugging Face Blog、arXiv cs.AI、TechCrunch AI · 日报主页：<a href="'+esc(safeUrl(meta.dailyUrl))+'" target="_blank" rel="noopener noreferrer">'+esc(meta.dailyUrl)+'</a>';
 })();
 </script>
 </body></html>"""
 
 def build_html(data):
-    return HTML_TMPL.replace("__DATA__", json.dumps(data, ensure_ascii=False))
+    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    return HTML_TMPL.replace("__DATA__", payload)
 
 # ----------------------------- Markdown 摘要 -----------------------------
 def build_markdown(data, dashboard_url):
