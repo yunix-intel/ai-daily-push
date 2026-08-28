@@ -2,7 +2,7 @@ name: AI 日报每日推送（企业微信 + GitHub Pages）
 
 on:
   schedule:
-    - cron: '0 0 * * *'        # UTC 00:00 = 北京时间 08:00
+    - cron: '0 6 * * *'        # UTC 06:00 = 北京时间 14:00（下午2点推送）
   workflow_dispatch:           # 允许在 Actions 页面手动触发测试
 
 permissions:
