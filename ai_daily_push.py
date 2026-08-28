@@ -137,9 +137,11 @@ PROTECTED_TERMS.sort(key=len, reverse=True)
 
 
 def _protect_terms(text):
+    """用占位符保护专有名词。token 用 ASCII 字母数字（QQZ...ZQQ）而非符号，
+    降低被翻译引擎当作普通文本插入空格/标点的概率。"""
     placeholders = {}
     for i, term in enumerate(PROTECTED_TERMS):
-        token = f"§{i}§"
+        token = f"QQZ{i}ZQQ"
         pattern = re.compile(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])")
         if pattern.search(text):
             text = pattern.sub(token, text)
@@ -148,9 +150,16 @@ def _protect_terms(text):
 
 
 def _restore_terms(text, placeholders):
+    """还原占位符；翻译引擎可能在字符间插入空格/标点（如 "QQZ 6 ZQQ"），
+    用逐字符可插入空白的正则容忍这种变形。"""
     for token, term in placeholders.items():
-        text = text.replace(token, term)
+        loose_pattern = re.compile(r"[\s\-_]*".join(re.escape(ch) for ch in token))
+        text = loose_pattern.sub(term, text)
     return text
+
+
+def _has_leftover_placeholder(text):
+    return bool(re.search(r"QQZ\s*\d+\s*ZQQ", text))
 
 
 def translate_text(text, target="zh-CN", retries=3):
@@ -170,7 +179,12 @@ def translate_text(text, target="zh-CN", retries=3):
             if not translated or payload.get("responseStatus") not in (200, "200"):
                 raise ValueError(f"响应异常：{payload.get('responseStatus')}")
             translated = html.unescape(translated).strip()
-            return _restore_terms(translated, placeholders)
+            restored = _restore_terms(translated, placeholders)
+            if _has_leftover_placeholder(restored):
+                # 占位符被翻译引擎改写到无法识别的形态，宁可整体失败回退英文原文，
+                # 也不能把 "QQZ6ZQQ" 这类残留展示给用户。
+                raise ValueError(f"占位符还原失败，残留未识别：{restored[:80]}")
+            return restored
         except (urllib.error.HTTPError, urllib.error.URLError, ValueError) as exc:
             last_exc = exc
             time.sleep(2 * (attempt + 1))
