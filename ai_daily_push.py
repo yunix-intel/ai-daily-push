@@ -125,13 +125,41 @@ def aggregate_sources(primary):
 
 TRANSLATE_API = "https://api.mymemory.translated.net/get"
 
+# 常见 AI 公司/产品专有名词：翻译引擎会按字面英文单词误译（如 Anthropic->人性、
+# Google DeepMind 拆词、Meta->元）。翻译前用占位符保护，翻译后还原为原文名。
+PROTECTED_TERMS = [
+    "Anthropic", "OpenAI", "DeepMind", "Google DeepMind", "Meta", "xAI", "Grok",
+    "Midjourney", "Databricks", "Hugging Face", "GitHub", "TechCrunch",
+    "VentureBeat", "Claude", "Gemini", "ChatGPT", "Llama", "Mistral",
+]
+# 长名称先匹配（如 "Google DeepMind" 先于 "Meta"），避免子串被提前替换。
+PROTECTED_TERMS.sort(key=len, reverse=True)
+
+
+def _protect_terms(text):
+    placeholders = {}
+    for i, term in enumerate(PROTECTED_TERMS):
+        token = f"§{i}§"
+        pattern = re.compile(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])")
+        if pattern.search(text):
+            text = pattern.sub(token, text)
+            placeholders[token] = term
+    return text, placeholders
+
+
+def _restore_terms(text, placeholders):
+    for token, term in placeholders.items():
+        text = text.replace(token, term)
+    return text
+
 
 def translate_text(text, target="zh-CN", retries=3):
     if not text or not re.search(r"[A-Za-z]", text):
         return text
     text = html.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()[:490]
-    query = urllib.parse.urlencode({"q": text, "langpair": f"en|{target}"})
+    protected_text, placeholders = _protect_terms(text)
+    query = urllib.parse.urlencode({"q": protected_text, "langpair": f"en|{target}"})
     req = urllib.request.Request(f"{TRANSLATE_API}?{query}", headers={"User-Agent": "Mozilla/5.0"})
     last_exc = None
     for attempt in range(retries):
@@ -141,7 +169,8 @@ def translate_text(text, target="zh-CN", retries=3):
             translated = payload.get("responseData", {}).get("translatedText", "")
             if not translated or payload.get("responseStatus") not in (200, "200"):
                 raise ValueError(f"响应异常：{payload.get('responseStatus')}")
-            return html.unescape(translated).strip()
+            translated = html.unescape(translated).strip()
+            return _restore_terms(translated, placeholders)
         except (urllib.error.HTTPError, urllib.error.URLError, ValueError) as exc:
             last_exc = exc
             time.sleep(2 * (attempt + 1))
