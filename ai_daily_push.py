@@ -219,21 +219,33 @@ def translate_items(report):
     return report
 
 # ----------------------------- 数据整形 -----------------------------
+def translate_page_url(original_url):
+    """用 Google 翻译的网页代理把英文原文整页翻译成中文；只在原文确实是英文时生成。"""
+    if not original_url or not re.match(r"^https?://", original_url):
+        return ""
+    return "https://translate.google.com/translate?sl=auto&tl=zh-CN&u=" + urllib.parse.quote(original_url, safe="")
+
+
 def shape(report):
     sections, gi = [], 0
     for s in report.get("sections", []):
         its = []
         for it in s.get("items", []):
             gi += 1
+            title = it.get("title", "")
+            original_title = it.get("originalTitle", title)
+            original_link = it.get("links", {}).get("original", "")
+            is_translated = bool(original_title) and original_title != title
             its.append({
                 "idx": gi,
-                "title": it.get("title", ""),
-                "originalTitle": it.get("originalTitle", it.get("title", "")),
+                "title": title,
+                "originalTitle": original_title,
                 "summary": it.get("summary", ""),
                 "originalSummary": it.get("originalSummary", it.get("summary", "")),
                 "source": it.get("source", {}).get("name", ""),
-                "original": it.get("links", {}).get("original", ""),
+                "original": original_link,
                 "aihot": it.get("links", {}).get("aihot", ""),
+                "translatedPage": translate_page_url(original_link) if is_translated else "",
             })
         sections.append({"label": s.get("label", ""), "items": its})
     meta = {
@@ -294,6 +306,7 @@ HTML_TMPL = r"""<!DOCTYPE html>
   .card .original-text{font-size:12.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;margin-bottom:14px}
   .card .foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
   .src{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .linkgroup{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
   .orig{font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--border);padding:6px 12px;border-radius:10px;background:var(--bg2);white-space:nowrap;transition:.15s}
   .orig:hover{background:var(--accent);color:#0c1320;border-color:var(--accent)}
   footer{border-top:1px solid var(--border);margin-top:18px;padding:26px 0 50px;color:var(--muted);font-size:13.5px}
@@ -333,12 +346,12 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   let nav='';sections.forEach((s,i)=>{nav+='<a href="#sec-'+i+'">'+esc(s.label)+'<b>'+s.items.length+'</b></a>';});
   document.getElementById('navLinks').innerHTML=nav;
   let main='';sections.forEach((s,i)=>{main+='<section class="section" id="sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
-    s.items.forEach(it=>{const orig=safeUrl(it.original||it.aihot||'#');const tl=safeUrl(it.aihot||it.original||'#');
+    s.items.forEach(it=>{const orig=safeUrl(it.original||it.aihot||'#');const tl=safeUrl(it.aihot||it.original||'#');const tp=safeUrl(it.translatedPage||'');
       main+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
       main+='<h3><a href="'+esc(tl)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
       main+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
       if(it.originalTitle!==it.title||it.originalSummary!==it.summary) main+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+'</p>';
-      main+='<div class="foot"><span class="src">'+esc(it.source)+'</span><a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></div></article>';});
+      main+='<div class="foot"><span class="src">'+esc(it.source)+'</span><span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span></div></article>';});
     main+='</div></section>';});
   document.getElementById('main').innerHTML=main;
   const sn=(meta.source&&meta.source.name)||'AI HOT', su=(meta.source&&meta.source.url)||meta.dailyUrl||'https://aihot.virxact.com';
@@ -427,8 +440,8 @@ def truncate_bytes(s, max_bytes):
 
 def push_wecom_webhook(webhook, markdown, dashboard_url=None):
     """企业微信群机器人 -> 个人微信。无需 access_token、无需 IP 白名单。
-    发两条：① news 图文卡片（按钮卡片，点击打开完整仪表盘网页）② markdown 摘要。"""
-    results = []
+    只发一条：有 dashboard_url 时发 news 图文卡片（按钮卡片，点击打开完整仪表盘网页），
+    否则退化为 markdown 摘要（没有网页链接可跳转，只能把要点直接发出来）。"""
     if dashboard_url:
         news = {
             "msgtype": "news",
@@ -441,10 +454,9 @@ def push_wecom_webhook(webhook, markdown, dashboard_url=None):
                 }]
             },
         }
-        results.append(http_post_json(webhook, news))
+        return [http_post_json(webhook, news)]
     content = truncate_bytes(markdown, 3900)  # 群机器人 markdown 上限 4096 字节
-    results.append(http_post_json(webhook, {"msgtype": "markdown", "markdown": {"content": content}}))
-    return results
+    return [http_post_json(webhook, {"msgtype": "markdown", "markdown": {"content": content}})]
 
 
 def push_feishu(webhook, title, markdown, dashboard_url=None):
