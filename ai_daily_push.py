@@ -119,28 +119,29 @@ def aggregate_sources(primary):
             target.append({"title": item["title"], "summary": item["summary"], "source": {"name": item["source"]}, "links": {"original": item["link"], "aihot": item["link"]}})
     return {"date": primary.get("date", ""), "windowStart": primary.get("windowStart", ""), "windowEnd": primary.get("windowEnd", ""), "generatedAt": primary.get("generatedAt", ""), "attribution": primary.get("attribution", {}), "links": primary.get("links", {}), "sections": sections}
 
-TRANSLATE_API = "https://translate.googleapis.com/translate_a/single"
+TRANSLATE_API = "https://api.mymemory.translated.net/get"
 
 
 def translate_text(text, target="zh-CN", retries=3):
     if not text or not re.search(r"[A-Za-z]", text):
         return text
     text = html.unescape(text)
-    text = re.sub(r"\s+", " ", text).strip()[:1800]
-    query = urllib.parse.urlencode({"client": "gtx", "sl": "auto", "tl": target, "dt": "t", "q": text})
+    text = re.sub(r"\s+", " ", text).strip()[:490]
+    query = urllib.parse.urlencode({"q": text, "langpair": f"en|{target}"})
     req = urllib.request.Request(f"{TRANSLATE_API}?{query}", headers={"User-Agent": "Mozilla/5.0"})
     last_exc = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=20) as response:
-                translated = json.loads(response.read().decode("utf-8"))
-            return "".join(part[0] for part in translated[0] if part and part[0]).strip()
-        except urllib.error.HTTPError as exc:
+                payload = json.loads(response.read().decode("utf-8"))
+            translated = payload.get("responseData", {}).get("translatedText", "")
+            if not translated or payload.get("responseStatus") not in (200, "200"):
+                raise ValueError(f"响应异常：{payload.get('responseStatus')}")
+            return html.unescape(translated).strip()
+        except (urllib.error.HTTPError, urllib.error.URLError, ValueError) as exc:
             last_exc = exc
-            if exc.code == 429:
-                time.sleep(2 * (attempt + 1))
-                continue
-            raise
+            time.sleep(2 * (attempt + 1))
+            continue
     raise last_exc
 
 
@@ -150,15 +151,23 @@ def translate_items(report):
         for item in section.get("items", []):
             item["originalTitle"] = item.get("title", "")
             item["originalSummary"] = item.get("summary", "")
+            ok = True
             try:
                 item["title"] = translate_text(item["title"])
-                time.sleep(0.6)
-                item["summary"] = translate_text(item["summary"])
-                time.sleep(0.6)
-                translated += 1
+                time.sleep(1.2)
             except Exception as exc:
+                ok = False
+                print(f"     标题翻译失败，保留英文原文：{exc}")
+            try:
+                item["summary"] = translate_text(item["summary"])
+                time.sleep(1.2)
+            except Exception as exc:
+                ok = False
+                print(f"     摘要翻译失败，保留英文原文：{exc}")
+            if ok:
+                translated += 1
+            else:
                 failed += 1
-                print(f"     翻译失败，保留英文原文：{exc}")
     print(f"     翻译完成：{translated} 条，失败：{failed} 条")
     return report
 
