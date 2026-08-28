@@ -25,7 +25,7 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 
 注意：网络请求在受限环境下需放行外网（本机直跑即可）。
 """
-import json, sys, os, re, html, urllib.parse, urllib.request, urllib.error
+import json, sys, os, re, html, time, urllib.parse, urllib.request, urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
@@ -122,31 +122,44 @@ def aggregate_sources(primary):
 TRANSLATE_API = "https://translate.googleapis.com/translate_a/single"
 
 
-def translate_text(text, target="zh-CN"):
+def translate_text(text, target="zh-CN", retries=3):
     if not text or not re.search(r"[A-Za-z]", text):
         return text
     text = html.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()[:1800]
     query = urllib.parse.urlencode({"client": "gtx", "sl": "auto", "tl": target, "dt": "t", "q": text})
     req = urllib.request.Request(f"{TRANSLATE_API}?{query}", headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=20) as response:
-        translated = json.loads(response.read().decode("utf-8"))
-    return "".join(part[0] for part in translated[0] if part and part[0]).strip()
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as response:
+                translated = json.loads(response.read().decode("utf-8"))
+            return "".join(part[0] for part in translated[0] if part and part[0]).strip()
+        except urllib.error.HTTPError as exc:
+            last_exc = exc
+            if exc.code == 429:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise
+    raise last_exc
 
 
 def translate_items(report):
-    translated = 0
+    translated, failed = 0, 0
     for section in report.get("sections", []):
         for item in section.get("items", []):
             item["originalTitle"] = item.get("title", "")
             item["originalSummary"] = item.get("summary", "")
             try:
                 item["title"] = translate_text(item["title"])
+                time.sleep(0.6)
                 item["summary"] = translate_text(item["summary"])
+                time.sleep(0.6)
                 translated += 1
             except Exception as exc:
+                failed += 1
                 print(f"     翻译失败，保留英文原文：{exc}")
-    print(f"     翻译完成：{translated} 条")
+    print(f"     翻译完成：{translated} 条，失败：{failed} 条")
     return report
 
 # ----------------------------- 数据整形 -----------------------------
