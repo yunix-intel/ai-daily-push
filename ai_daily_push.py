@@ -500,18 +500,6 @@ def main():
     webhook = (os.environ.get("WECOM_WEBHOOK") or cfg.get("wecom_webhook", "")).strip()
     feishu_webhook = (os.environ.get("FEISHU_WEBHOOK") or cfg.get("feishu_webhook", "")).strip()
 
-    if feishu_webhook:
-        print("[4/4] 推送到飞书群机器人（-> 飞书个人）...")
-        title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
-        try:
-            resp = push_feishu(feishu_webhook, title, md, dashboard_url)
-            print("     飞书返回：", resp)
-            if isinstance(resp, dict) and resp.get("StatusCode") != 0:
-                print("     ⚠️ 推送失败：", resp.get("msg"), resp)
-        except Exception as e:
-            print("     ⚠️ 飞书推送异常：", repr(e))
-        return
-
     if webhook:
         print("[4/4] 推送到企业微信群机器人（-> 个人微信）...")
         try:
@@ -522,6 +510,18 @@ def main():
                 print("     ⚠️ 推送失败：", failed)
         except Exception as e:
             print("     ⚠️ 企业微信群机器人推送异常：", repr(e))
+        return
+
+    if feishu_webhook:
+        print("[4/4] 推送到飞书群机器人（-> 飞书个人）...")
+        title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
+        try:
+            resp = push_feishu(feishu_webhook, title, md, dashboard_url)
+            print("     飞书返回：", resp)
+            if isinstance(resp, dict) and resp.get("StatusCode") != 0:
+                print("     ⚠️ 推送失败：", resp.get("msg"), resp)
+        except Exception as e:
+            print("     ⚠️ 飞书推送异常：", repr(e))
         return
 
     if corpid and corpsecret and agentid:
