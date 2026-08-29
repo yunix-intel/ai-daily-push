@@ -807,9 +807,10 @@ def main():
 
     # 微信公众号发布（独立于推送渠道）
     wechat_cfg = cfg.get("wechat_official", {}) or {}
-    wechat_enabled = wechat_cfg.get("enabled", False)
     wechat_appid = (os.environ.get("WECHAT_APPID") or wechat_cfg.get("appid", "")).strip()
     wechat_appsecret = (os.environ.get("WECHAT_APPSECRET") or wechat_cfg.get("appsecret", "")).strip()
+    # 如果设置了 appid 和 appsecret（无论是环境变量还是配置文件），则自动启用
+    wechat_enabled = bool(wechat_appid and wechat_appsecret) or wechat_cfg.get("enabled", False)
 
     if wechat_enabled and wechat_appid and wechat_appsecret:
         print("\n[额外] 发布到微信公众号...")
