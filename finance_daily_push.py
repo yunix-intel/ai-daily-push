@@ -803,6 +803,22 @@ def compose_markdown(body, tail, max_bytes):
     return truncate_bytes(body, budget) + "\n" + tail
 
 
+def push_wecom_news_card(webhook, dashboard_url):
+    """企业微信群机器人：图文卡片（news 类型），点击打开财经日报网页。"""
+    news = {
+        "msgtype": "news",
+        "news": {
+            "articles": [{
+                "title": "💹 查看完整财经日报（网页版）",
+                "description": "财经日报 · 股指 · 突发事件 · 市场分析 · 策略建议 · 点击打开",
+                "url": dashboard_url,
+                "picurl": "https://picsum.photos/id/1067/600/400",  # 财经主题配图
+            }]
+        },
+    }
+    return http_post_json(webhook, news)
+
+
 def push_markdown(webhook, body, tail):
     """企业微信群机器人 markdown 消息（上限 4096 字节，留余量到 3900）。"""
     content = compose_markdown(body, tail, 3900)
@@ -902,8 +918,13 @@ def main():
 
     if args.no_push:
         print("[5/5] --no-push：跳过推送。")
-        print("—— Markdown 预览（实际发送内容）——")
-        print(preview)
+        print("—— 图文卡片模式预览 ——")
+        if dashboard_url:
+            print(f"标题: 💹 查看完整财经日报（网页版）")
+            print(f"描述: 财经日报 · 股指 · 突发事件 · 市场分析 · 策略建议 · 点击打开")
+            print(f"链接: {dashboard_url}")
+        else:
+            print("（未配置 dashboard_url，无法发送图文卡片）")
         return
 
     webhook = (os.environ.get("WECOM_WEBHOOK") or cfg.get("wecom_webhook", "")).strip()
@@ -911,13 +932,24 @@ def main():
 
     if webhook:
         print("[5/5] 推送财经日报到企业微信群机器人 ...")
-        try:
-            resp = push_markdown(webhook, body, tail)
-            print("     企业微信返回：", resp)
-            if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
-                print("     [!] 推送失败：", resp)
-        except Exception as exc:
-            print("     [!] 企业微信推送异常：", repr(exc))
+        if dashboard_url:
+            print("     使用图文卡片模式（news）")
+            try:
+                resp = push_wecom_news_card(webhook, dashboard_url)
+                print("     企业微信返回：", resp)
+                if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
+                    print("     [!] 推送失败：", resp)
+            except Exception as exc:
+                print("     [!] 企业微信推送异常：", repr(exc))
+        else:
+            print("     无 dashboard_url，降级为 markdown 模式")
+            try:
+                resp = push_markdown(webhook, body, tail)
+                print("     企业微信返回：", resp)
+                if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
+                    print("     [!] 推送失败：", resp)
+            except Exception as exc:
+                print("     [!] 企业微信推送异常：", repr(exc))
         return
 
     if feishu_webhook:
