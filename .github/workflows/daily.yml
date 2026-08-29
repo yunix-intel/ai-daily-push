@@ -26,6 +26,11 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: 清除 Python 缓存
+        run: |
+          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+          find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
       - name: 第一条：AI 日报（图文卡片 + AI 日报网页）
         env:
           WECOM_CORPID: ${{ secrets.WECOM_CORPID }}
