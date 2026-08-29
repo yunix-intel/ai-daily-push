@@ -520,9 +520,15 @@ STRATEGY_FALLBACK = {
 
 # ----------------------------- 数据整形 -----------------------------
 def translate_page_url(original_url):
-    if not original_url or not re.match(r"^https?://", original_url):
-        return ""
-    return "https://translate.google.com/translate?sl=auto&tl=zh-CN&u=" + urllib.parse.quote(original_url, safe="")
+    """生成网页翻译链接。Google 翻译服务在某些网络环境下不稳定，禁用翻译链接。
+    用户可以直接点击"阅读原文"，浏览器会自动提供翻译功能（Chrome/Edge 内置翻译）。"""
+    # Google Translate 网页代理在某些地区访问慢或被限制，且 Chrome/Edge 浏览器
+    # 自带的"翻译此页"功能体验更好，所以暂时禁用这个链接。
+    return ""
+    # 原实现（已禁用）：
+    # if not original_url or not re.match(r"^https?://", original_url):
+    #     return ""
+    # return "https://translate.google.com/translate?sl=auto&tl=zh-CN&u=" + urllib.parse.quote(original_url, safe="")
 
 
 def shape_finance(sections, quotes, analysis, strategy, window_hours=24):
