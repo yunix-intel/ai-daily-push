@@ -114,6 +114,7 @@ FINANCE_FEEDS_ZH = [
 # topstories 包含大量个人理财、职场建议等非市场资讯；realtimeheadlines 返回的是几个月前的旧闻。
 FINANCE_FEEDS_EN = [
     ("Seeking Alpha", "https://seekingalpha.com/market_currents.xml"),
+    ("Bloomberg Markets", "https://feeds.bloomberg.com/markets/news.rss"),
     ("CNBC Finance", "https://www.cnbc.com/id/10000664/device/rss/rss.html"),
 ]
 
