@@ -96,10 +96,16 @@ def fetch_quotes():
 
 # ----------------------------- 财经来源 -----------------------------
 # 均为本机实测可用的源。中文源来自 rsshub 公共镜像，英文源为官方直连。
+# rsshub 镜像列表：主镜像失败时自动尝试备用镜像（故障转移）
+RSSHUB_MIRRORS = [
+    "https://rsshub.rssforever.com",
+    "https://rsshub.app",
+]
+
 FINANCE_FEEDS_ZH = [
-    ("格隆汇快讯", "https://rsshub.rssforever.com/gelonghui/live"),
-    ("同花顺快讯", "https://rsshub.rssforever.com/10jqka/realtimenews"),
-    ("金十数据", "https://rsshub.rssforever.com/jin10/flash"),
+    ("格隆汇快讯", "/gelonghui/live"),
+    ("同花顺快讯", "/10jqka/realtimenews"),
+    ("金十数据", "/jin10/flash"),
 ]
 # 注：WSJ 的 RSSMarketsMain 源已停更（实测最新条目停在 2025-01-27），会被 24 小时
 # 窗口全部丢弃，纯属浪费一次网络请求，故不收录。改用实测有当日内容的 Seeking Alpha。
@@ -134,6 +140,26 @@ def _published_dt(raw):
     return dt
 
 
+def _fetch_rss_with_mirrors(source_name, path, limit=20):
+    """中文源：尝试所有 rsshub 镜像直到成功；英文源：直接调用 fetch_rss。"""
+    # 如果是完整 URL（英文源），直接抓取
+    if path.startswith("http://") or path.startswith("https://"):
+        return fetch_rss(source_name, path, limit=limit)
+
+    # 中文源：path 是相对路径，遍历镜像列表
+    last_exc = None
+    for mirror in RSSHUB_MIRRORS:
+        url = mirror + path
+        try:
+            return fetch_rss(source_name, url, limit=limit)
+        except Exception as exc:
+            last_exc = exc
+            continue  # 尝试下一个镜像
+
+    # 所有镜像都失败
+    raise last_exc or RuntimeError(f"{source_name} 所有镜像均失败")
+
+
 def fetch_finance_items(hours=24, per_feed=20):
     """抓取全部来源，去重并只保留过去 hours 小时内的条目。
 
@@ -144,7 +170,7 @@ def fetch_finance_items(hours=24, per_feed=20):
     for source_name, url in FINANCE_FEEDS_ZH + FINANCE_FEEDS_EN:
         is_en = (source_name, url) in FINANCE_FEEDS_EN
         try:
-            items = fetch_rss(source_name, url, limit=per_feed)
+            items = _fetch_rss_with_mirrors(source_name, url, limit=per_feed)
         except Exception as exc:
             print(f"     来源跳过：{source_name}（{exc}）")
             continue
