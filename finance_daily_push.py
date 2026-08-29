@@ -107,6 +107,8 @@ FINANCE_FEEDS_ZH = [
     ("格隆汇快讯", "/gelonghui/live"),
     ("同花顺快讯", "/10jqka/realtimenews"),
     ("金十数据", "/jin10/flash"),
+    ("第一财经", "/yicai/brief"),
+    ("财新网", "/caixin/article"),
 ]
 # 注：WSJ 的 RSSMarketsMain 源已停更（实测最新条目停在 2025-01-27），会被 24 小时
 # 窗口全部丢弃，纯属浪费一次网络请求，故不收录。改用实测有当日内容的 Seeking Alpha。
@@ -168,12 +170,14 @@ def _fetch_rss_with_mirrors(source_name, path, limit=20):
 
 
 def fetch_finance_items(hours=24, per_feed=20):
-    """抓取全部来源，去重并只保留过去 hours 小时内的条目。
+    """抓取全部来源，去重并只保留过去 hours 小时内的条目。按国内/国外分组返回。
 
     发布时间无法解析的条目一律保留：宁可多收一条，也不要因为源的时间格式古怪而漏掉。
     """
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    collected, seen, dropped_old = [], set(), 0
+    collected_zh, collected_en = [], []
+    seen, dropped_old = set(), 0
+
     for source_name, url in FINANCE_FEEDS_ZH + FINANCE_FEEDS_EN:
         is_en = (source_name, url) in FINANCE_FEEDS_EN
         try:
@@ -192,18 +196,25 @@ def fetch_finance_items(hours=24, per_feed=20):
                 dropped_old += 1
                 continue
             seen.add(key)
-            collected.append({
+            entry = {
                 "title": title,
                 "summary": (item.get("summary") or "").strip(),
                 "link": item.get("link") or "",
                 "source": source_name,
                 "isEnglish": is_en,
                 "published": published.isoformat() if published else "",
-            })
+            }
+            if is_en:
+                collected_en.append(entry)
+            else:
+                collected_zh.append(entry)
             kept += 1
         print(f"     {source_name}：抓取 {len(items)} 条，入库 {kept} 条")
-    print(f"     超出 {hours} 小时窗口丢弃：{dropped_old} 条；合计入库 {len(collected)} 条")
-    return collected
+
+    total = len(collected_zh) + len(collected_en)
+    print(f"     超出 {hours} 小时窗口丢弃：{dropped_old} 条")
+    print(f"     合计入库：国内 {len(collected_zh)} 条 + 国际 {len(collected_en)} 条 = {total} 条")
+    return {"domestic": collected_zh, "international": collected_en}
 
 
 def translate_finance_items(items, give_up_after=4):
@@ -213,6 +224,8 @@ def translate_finance_items(items, give_up_after=4):
     逐条调用几十条必然被打成 429，且每次失败要重试到超时（实测单条约 17s）。
     LLM 不可用（未配置 key 等）时退回 MyMemory 逐条翻译，并保留熔断：
     连续 give_up_after 条失败就放弃剩余翻译，避免把 CI 拖死。
+
+    items: 列表，直接修改每个 item 的 title/summary，并添加 originalTitle/originalSummary
     """
     for item in items:
         item["originalTitle"] = item["title"]
@@ -278,27 +291,35 @@ def translate_finance_items(items, give_up_after=4):
     return items
 
 # ----------------------------- 板块分类 -----------------------------
-SECTION_RULES = [
-    ("宏观与政策", ["央行", "货币政策", "降准", "降息", "加息", "国常会", "财政", "CPI", "PPI", "PMI",
-                    "GDP", "社融", "信贷", "汇率", "人民币", "国债", "美联储", "Fed", "FOMC", "关税"]),
+# 国内板块规则
+SECTION_RULES_DOMESTIC = [
+    ("宏观与政策", ["央行", "货币政策", "降准", "降息", "国常会", "财政", "CPI", "PPI", "PMI",
+                    "GDP", "社融", "信贷", "汇率", "人民币", "国债", "国务院", "发改委"]),
     ("A股与港股", ["A股", "沪指", "上证", "深证", "创业板", "科创板", "北向", "南向", "港股", "恒生",
                    "新股", "IPO", "证监会", "交易所", "ETF", "北交所"]),
-    ("全球市场", ["美股", "纳斯达克", "道指", "标普", "欧股", "日经", "原油", "黄金", "白银", "比特币",
-                  "美元", "欧元", "Nasdaq", "Dow Jones", "S&P 500", "Brent", "WTI", "Bitcoin"]),
     ("公司与行业", ["财报", "业绩", "营收", "净利", "并购", "收购", "重组", "增持", "减持", "回购",
                     "定增", "分红", "中标", "签约", "产能", "涨价", "减产"]),
 ]
+
+# 国际板块规则
+SECTION_RULES_INTERNATIONAL = [
+    ("全球宏观", ["美联储", "Fed", "FOMC", "加息", "降息", "欧央行", "ECB", "关税", "GDP", "CPI", "PMI"]),
+    ("海外市场", ["美股", "纳斯达克", "道指", "标普", "欧股", "日经", "Nasdaq", "Dow Jones", "S&P 500"]),
+    ("大宗商品", ["原油", "黄金", "白银", "比特币", "Brent", "WTI", "Bitcoin"]),
+    ("公司与行业", ["财报", "业绩", "营收", "净利", "并购", "收购", "Nvidia", "Tesla", "Apple", "Microsoft"]),
+]
+
 DEFAULT_SECTION = "其他财经资讯"
 
 
-def classify_sections(items):
+def classify_sections(items, rules):
     """按关键词把条目分到板块；命中多个取第一个规则，未命中进兜底板块。空板块不展示。"""
-    buckets = {label: [] for label, _ in SECTION_RULES}
+    buckets = {label: [] for label, _ in rules}
     buckets[DEFAULT_SECTION] = []
     for item in items:
         text = f"{item['title']} {item['summary']}"
         placed = False
-        for label, keywords in SECTION_RULES:
+        for label, keywords in rules:
             if any(kw.lower() in text.lower() for kw in keywords):
                 buckets[label].append(item)
                 placed = True
@@ -438,22 +459,25 @@ ANALYSIS_SYSTEM = (
 )
 
 
-def generate_analysis(items, quotes):
-    """一次调用同时产出：突发事件清单 + 今日总结 + 宏观分析 + 板块分析。"""
-    user_prompt = f"""下面是过去 24 小时的财经快讯，以及最新的指数行情快照。
+def generate_analysis(items, quotes, market_label="国内"):
+    """一次调用同时产出：突发事件清单 + 今日总结 + 宏观分析 + 板块分析。
+
+    market_label: "国内" 或 "国际"，用于指导 LLM 聚焦相应市场
+    """
+    user_prompt = f"""下面是过去 24 小时的{market_label}财经快讯，以及最新的指数行情快照。
 
 【指数行情快照】（唯一可引用的数字来源）
 {_quotes_digest(quotes)}
 
-【财经快讯】
+【{market_label}财经快讯】
 {_news_digest(items)}
 
 请输出 JSON，字段如下：
 {{
   "emergencyEvents": [
-    {{"title": "事件标题（15字内）", "desc": "50字内说明发生了什么", "impact": "30字内说明对A股/港股可能的影响方向"}}
+    {{"title": "事件标题（15字内）", "desc": "50字内说明发生了什么", "impact": "30字内说明对市场可能的影响方向"}}
   ],
-  "summary": "今日总结，150-250字，概括过去24小时最值得关注的几条线索",
+  "summary": "今日{market_label}市场总结，150-250字，概括过去24小时最值得关注的几条线索",
   "macro": "宏观与资金面分析，150-250字，涉及政策、利率、汇率、外部市场",
   "sector": "板块与行业分析，150-250字，指出受关注或受压的方向"
 }}
@@ -533,10 +557,34 @@ def translate_page_url(original_url):
     # return "https://translate.google.com/translate?sl=auto&tl=zh-CN&u=" + urllib.parse.quote(original_url, safe="")
 
 
-def shape_finance(sections, quotes, analysis, strategy, window_hours=24):
+def shape_finance(sections_domestic, sections_international, quotes, analysis_domestic, analysis_international, strategy, window_hours=24):
+    """整合国内和国际市场数据，返回完整数据结构。"""
     now_utc = datetime.now(timezone.utc)
-    shaped, gi = [], 0
-    for section in sections:
+
+    # 国内要闻整形
+    shaped_domestic, gi = [], 0
+    for section in sections_domestic:
+        items = []
+        for item in section["items"]:
+            gi += 1
+            title = item.get("title", "")
+            summary = item.get("summary", "")
+            link = item.get("link", "")
+            items.append({
+                "idx": gi,
+                "title": title,
+                "originalTitle": item.get("originalTitle", title),
+                "summary": summary,
+                "originalSummary": item.get("originalSummary", summary),
+                "source": item.get("source", ""),
+                "original": link,
+                "translatedPage": "",  # 国内源无需翻译
+            })
+        shaped_domestic.append({"label": section["label"], "items": items})
+
+    # 国际要闻整形
+    shaped_international = []
+    for section in sections_international:
         items = []
         for item in section["items"]:
             gi += 1
@@ -554,199 +602,59 @@ def shape_finance(sections, quotes, analysis, strategy, window_hours=24):
                 "original": link,
                 "translatedPage": translate_page_url(link) if is_translated else "",
             })
-        shaped.append({"label": section["label"], "items": items})
+        shaped_international.append({"label": section["label"], "items": items})
+
     meta = {
         "date": (now_utc + CST_OFFSET).strftime("%Y-%m-%d"),
         "windowStart": (now_utc - timedelta(hours=window_hours)).isoformat(),
         "windowEnd": now_utc.isoformat(),
         "generatedAt": now_utc.isoformat(),
         "total": gi,
+        "domesticCount": sum(len(s["items"]) for s in shaped_domestic),
+        "internationalCount": sum(len(s["items"]) for s in shaped_international),
     }
+
     return {
         "meta": meta,
         "quotes": quotes,
-        "emergencyEvents": analysis.get("emergencyEvents") or [],
-        "analysis": {
-            "summary": analysis.get("summary", ""),
-            "macro": analysis.get("macro", ""),
-            "sector": analysis.get("sector", ""),
+        "domestic": {
+            "emergencyEvents": analysis_domestic.get("emergencyEvents") or [],
+            "analysis": {
+                "summary": analysis_domestic.get("summary", ""),
+                "macro": analysis_domestic.get("macro", ""),
+                "sector": analysis_domestic.get("sector", ""),
+            },
+            "sections": shaped_domestic,
+        },
+        "international": {
+            "emergencyEvents": analysis_international.get("emergencyEvents") or [],
+            "analysis": {
+                "summary": analysis_international.get("summary", ""),
+                "macro": analysis_international.get("macro", ""),
+                "sector": analysis_international.get("sector", ""),
+            },
+            "sections": shaped_international,
         },
         "strategy": {
             "aShare": strategy.get("aShare", ""),
             "hkShare": strategy.get("hkShare", ""),
             "risk": strategy.get("risk", ""),
         },
-        "sections": shaped,
     }
 
-# ----------------------------- HTML -----------------------------
-HTML_TMPL = r"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>财经日报 · 晨报仪表盘</title>
-<style>
-  :root{--bg:#0e1014;--bg2:#151922;--card:#171c26;--card-hover:#1e2531;--border:#272f3d;--text:#e8ecf3;--muted:#9aa4b2;--accent:#f0b429;--accent2:#37e0b0;--up:#ff5b5b;--down:#3ddc84;--warn:#ff7a45;--chip:#222b39;--shadow:rgba(0,0,0,.45);}
-  *{box-sizing:border-box;margin:0;padding:0}
-  html{scroll-behavior:smooth}
-  body{background:radial-gradient(1200px 600px at 80% -10%, #2a2213 0%, var(--bg) 55%) fixed;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
-  a{color:inherit;text-decoration:none}
-  .wrap{max-width:1180px;margin:0 auto;padding:0 18px}
-  .hero{padding:30px 0 16px}
-  .kicker{display:inline-flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.18em;color:var(--accent);border:1px solid var(--border);padding:5px 12px;border-radius:999px;background:var(--bg2)}
-  .hero h1{font-size:clamp(24px,4vw,36px);font-weight:800;margin:12px 0 4px;letter-spacing:-.5px}
-  .hero h1 .sub{color:var(--accent)}
-  .hero .date{font-size:15px;color:var(--text);font-weight:600}
-  .hero .window{font-size:13px;color:var(--muted);margin-top:2px}
-  .quotes{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
-  .quote{display:inline-flex;align-items:baseline;gap:7px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:7px 13px}
-  .quote .qn{font-size:12.5px;color:var(--muted)}
-  .quote .qp{font-size:15px;font-weight:800}
-  .quote .qc{font-size:12.5px;font-weight:700}
-  .quote.up .qp,.quote.up .qc{color:var(--up)}
-  .quote.down .qp,.quote.down .qc{color:var(--down)}
-  .stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-  .stat{display:inline-flex;align-items:baseline;gap:5px;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:5px 12px}
-  .stat .num{font-size:14px;font-weight:800;color:var(--accent)}
-  .stat .lbl{font-size:12px;color:var(--muted)}
-  .stat.total .num{color:var(--accent2)}
-  .block{margin:14px 0 0;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
-  .block h2{font-size:14px;font-weight:800;color:var(--accent2);margin-bottom:8px;display:flex;align-items:center;gap:6px}
-  .block p{font-size:13.5px;color:#c9d1dc;margin-bottom:8px;text-align:justify}
-  .block p:last-child{margin-bottom:0}
-  .block .sub-h{font-size:12.5px;font-weight:800;color:var(--accent);margin:10px 0 3px}
-  .block.emergency{background:linear-gradient(135deg,#33210f,#1d1710);border-color:var(--warn)}
-  .block.emergency h2{color:var(--warn)}
-  .block.emergency ol{list-style:none;counter-reset:ev}
-  .block.emergency li{counter-increment:ev;display:flex;gap:8px;padding:5px 0;border-bottom:1px dashed var(--border)}
-  .block.emergency li:last-child{border-bottom:none}
-  .block.emergency li::before{content:counter(ev);flex:0 0 auto;width:18px;height:18px;border-radius:5px;background:var(--warn);color:#1a1109;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
-  .ev-t{font-size:13.5px;font-weight:700;text-align:justify}
-  .ev-d{font-size:12.5px;color:#c9d1dc;text-align:justify}
-  .ev-i{font-size:12px;color:var(--accent);text-align:justify}
-  .block.strategy{background:linear-gradient(135deg,#12281f,#141a18);border-color:var(--accent2)}
-  .risk{font-size:12px;color:#9aa4b2;border-top:1px solid var(--border);padding-top:8px;margin-top:8px}
-  .nav{position:sticky;top:0;z-index:20;background:rgba(14,16,20,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);margin-top:14px}
-  .nav .wrap{display:flex;gap:10px;overflow-x:auto;padding:12px 18px;scrollbar-width:thin}
-  .nav a{flex:0 0 auto;font-size:13.5px;color:var(--muted);border:1px solid var(--border);background:var(--bg2);padding:7px 13px;border-radius:999px;white-space:nowrap;transition:.15s}
-  .nav a:hover{color:var(--text);border-color:var(--accent)}
-  .nav a b{color:var(--accent);font-weight:700;margin-left:6px}
-  main{padding:28px 0 10px}
-  .section{margin-bottom:38px;scroll-margin-top:64px}
-  .section-head{display:flex;align-items:baseline;gap:12px;margin-bottom:16px;border-left:4px solid var(--accent);padding-left:12px}
-  .section-head h2{font-size:21px;font-weight:750}
-  .section-head .count{font-size:14px;color:var(--muted)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:16px}
-  .card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px;transition:.18s}
-  .card:hover{background:var(--card-hover);border-color:#4a4230;transform:translateY(-2px);box-shadow:0 10px 26px var(--shadow)}
-  .card .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
-  .card .idx{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#c98f10);color:#1a1109;font-weight:800;font-size:15px;flex:0 0 auto}
-  .chip{font-size:12px;color:var(--muted);background:var(--chip);border:1px solid var(--border);padding:4px 10px;border-radius:999px;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .card h3{font-size:16.5px;font-weight:700;line-height:1.45;margin-bottom:9px;text-align:justify}
-  .card h3 a:hover{color:var(--accent)}
-  .card .summary{font-size:14px;color:#c4ccd8;flex:1;margin-bottom:10px;text-align:justify}
-  .card .original-text{font-size:12.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;margin-bottom:14px;text-align:justify}
-  .card .foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
-  .src{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .linkgroup{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-  .orig{font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--border);padding:6px 12px;border-radius:10px;background:var(--bg2);white-space:nowrap;transition:.15s}
-  .orig:hover{background:var(--accent);color:#1a1109;border-color:var(--accent)}
-  footer{border-top:1px solid var(--border);margin-top:18px;padding:26px 0 50px;color:var(--muted);font-size:13.5px}
-  .note{font-size:12.5px;color:#6f7a8a;margin-top:10px}
-  @media (max-width:560px){.hero{padding:22px 0 12px}.grid{grid-template-columns:1fr}}
-</style>
-</head>
-<body>
-<header class="hero"><div class="wrap">
-  <span class="kicker">● 财经日报 · 多来源聚合</span>
-  <h1>财经日报 <span class="sub">晨报仪表盘</span></h1>
-  <div class="date" id="heroDate">—</div>
-  <div class="window" id="heroWindow">—</div>
-  <div class="quotes" id="heroQuotes"></div>
-  <div class="stats" id="heroStats"></div>
-  <div class="block emergency" id="emergency" style="display:none">
-    <h2>🚨 过去 24 小时突发事件</h2>
-    <ol id="emergencyList"></ol>
-  </div>
-  <div class="block" id="summaryBlock" style="display:none">
-    <h2>📝 今日总结</h2>
-    <p id="summaryText"></p>
-  </div>
-  <div class="block" id="analysisBlock" style="display:none">
-    <h2>📈 市场分析汇总</h2>
-    <div id="analysisBody"></div>
-  </div>
-  <div class="block strategy" id="strategyBlock" style="display:none">
-    <h2>🎯 今日策略建议</h2>
-    <div id="strategyBody"></div>
-  </div>
-</div></header>
-<nav class="nav"><div class="wrap" id="navLinks"></div></nav>
-<main class="wrap" id="main"></main>
-<footer><div class="wrap">
-  <div id="footerMeta">—</div>
-  <div class="note">本站仅作信息聚合与自动化分析展示，资讯版权归原作者所有；分析与策略由程序自动生成，不构成投资建议。</div>
-</div></footer>
-<script>
-const DATA = __DATA__;
-function fmtBeijing(iso, opts){try{const dt=new Date(iso);const o=Object.assign({timeZone:'Asia/Shanghai',hour12:false},opts||{});return new Intl.DateTimeFormat('zh-CN',o).format(dt);}catch(e){return iso;}}
-function truncate(s,n){const arr=Array.from(s||'');if(arr.length<=n)return s||'';return arr.slice(0,n-1).join('')+'…';}
-function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='http:'||p==='https:')?u:'#';}catch(e){return '#';}}
-(function render(){
-  const meta=DATA.meta, sections=DATA.sections||[];
-  document.getElementById('heroDate').textContent=fmtBeijing(meta.date+'T00:00:00+08:00',{year:'numeric',month:'long',day:'numeric',weekday:'long'})+'（北京时间）';
-  document.getElementById('heroWindow').textContent='收录窗口：'+fmtBeijing(meta.windowStart,{month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})+' — '+fmtBeijing(meta.windowEnd,{month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})+'（北京时间，过去 24 小时）';
-  const quotes=DATA.quotes||[];
-  document.getElementById('heroQuotes').innerHTML=quotes.map(q=>{
-    const cls=q.pct>0?'up':(q.pct<0?'down':'');
-    const sign=q.pct>0?'+':'';
-    return '<span class="quote '+cls+'"><span class="qn">'+esc(q.name)+'</span><span class="qp">'+q.price+'</span><span class="qc">'+sign+q.pct.toFixed(2)+'%</span></span>';
-  }).join('');
-  let st='<div class="stat total"><div class="num">'+meta.total+'</div><div class="lbl">总条数</div></div>';
-  sections.forEach(s=>{st+='<div class="stat"><div class="num">'+s.items.length+'</div><div class="lbl">'+esc(s.label)+'</div></div>';});
-  document.getElementById('heroStats').innerHTML=st;
-  const events=DATA.emergencyEvents||[];
-  if(events.length){
-    document.getElementById('emergency').style.display='';
-    document.getElementById('emergencyList').innerHTML=events.map(e=>
-      '<li><div><div class="ev-t">'+esc(e.title)+'</div><div class="ev-d">'+esc(e.desc)+'</div>'+
-      (e.impact?'<div class="ev-i">影响：'+esc(e.impact)+'</div>':'')+'</div></li>').join('');
-  }
-  const an=DATA.analysis||{};
-  if(an.summary){document.getElementById('summaryBlock').style.display='';document.getElementById('summaryText').textContent=an.summary;}
-  let ab='';
-  if(an.macro) ab+='<div class="sub-h">宏观与资金面</div><p>'+esc(an.macro)+'</p>';
-  if(an.sector) ab+='<div class="sub-h">板块与行业</div><p>'+esc(an.sector)+'</p>';
-  if(ab){document.getElementById('analysisBlock').style.display='';document.getElementById('analysisBody').innerHTML=ab;}
-  const sg=DATA.strategy||{};
-  let sb='';
-  if(sg.aShare) sb+='<div class="sub-h">A 股</div><p>'+esc(sg.aShare)+'</p>';
-  if(sg.hkShare) sb+='<div class="sub-h">港股</div><p>'+esc(sg.hkShare)+'</p>';
-  if(sg.risk) sb+='<div class="risk">'+esc(sg.risk)+'</div>';
-  if(sb){document.getElementById('strategyBlock').style.display='';document.getElementById('strategyBody').innerHTML=sb;}
-  let nav='';sections.forEach((s,i)=>{nav+='<a href="#sec-'+i+'">'+esc(s.label)+'<b>'+s.items.length+'</b></a>';});
-  document.getElementById('navLinks').innerHTML=nav;
-  let main='';sections.forEach((s,i)=>{main+='<section class="section" id="sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
-    s.items.forEach(it=>{const orig=safeUrl(it.original||'#');const tp=safeUrl(it.translatedPage||'');
-      main+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
-      main+='<h3><a href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
-      main+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
-      if(it.originalTitle!==it.title||it.originalSummary!==it.summary) main+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+'</p>';
-      main+='<div class="foot"><span class="src">'+esc(it.source)+'</span><span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span></div></article>';});
-    main+='</div></section>';});
-  document.getElementById('main').innerHTML=main;
-  document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：格隆汇、同花顺、金十数据、Seeking Alpha、MarketWatch、CNBC Finance · 行情：腾讯财经';
-})();
-</script>
-</body></html>"""
 
 
 def build_finance_html(data):
+    """生成财经日报 HTML，使用外部模板文件。"""
     # "</" 转义成 "<\/"：标题里若含字面 </script> 会提前闭合脚本标签导致注入。
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    return HTML_TMPL.replace("__DATA__", payload)
+
+    # 读取模板文件
+    template_path = os.path.join(HERE, "finance_dashboard_template.html")
+    with open(template_path, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    return template.replace("__DATA_PLACEHOLDER__", payload)
 
 # ----------------------------- Markdown 推送正文 -----------------------------
 def build_finance_markdown(data, dashboard_url):
@@ -759,27 +667,7 @@ def build_finance_markdown(data, dashboard_url):
         parts = [f"{q['name']} {q['price']}（{q['pct']:+.2f}%）" for q in quotes]
         lines.append("> " + " ｜ ".join(parts))
 
-    events = data.get("emergencyEvents") or []
-    if events:
-        lines.append("\n## 🚨 过去 24 小时突发事件")
-        for i, e in enumerate(events, 1):
-            lines.append(f"> **{i}. {e.get('title','')}**")
-            if e.get("desc"):
-                lines.append(f"> {e['desc']}")
-            if e.get("impact"):
-                lines.append(f"> 影响：{e['impact']}")
-
-    an = data.get("analysis") or {}
-    if an.get("summary"):
-        lines.append("\n## 📝 今日总结")
-        lines.append(f"> {an['summary']}")
-    if an.get("macro") or an.get("sector"):
-        lines.append("\n## 📈 市场分析汇总")
-        if an.get("macro"):
-            lines.append(f"> **宏观与资金面**：{an['macro']}")
-        if an.get("sector"):
-            lines.append(f"> **板块与行业**：{an['sector']}")
-
+    # 策略建议（放在最前面，用户最关心）
     sg = data.get("strategy") or {}
     if sg.get("aShare") or sg.get("hkShare"):
         lines.append("\n## 🎯 今日策略建议")
@@ -787,6 +675,37 @@ def build_finance_markdown(data, dashboard_url):
             lines.append(f"> **A 股**：{sg['aShare']}")
         if sg.get("hkShare"):
             lines.append(f"> **港股**：{sg['hkShare']}")
+
+    # 国内要闻
+    domestic = data.get("domestic") or {}
+    if domestic.get("sections"):
+        lines.append(f"\n## 🇨🇳 国内要闻（{meta.get('domesticCount', 0)} 条）")
+
+        events_dom = domestic.get("emergencyEvents") or []
+        if events_dom:
+            lines.append("\n**🚨 突发事件**")
+            for i, e in enumerate(events_dom, 1):
+                lines.append(f"> {i}. **{e.get('title','')}** {e.get('desc','')}")
+
+        an_dom = domestic.get("analysis") or {}
+        if an_dom.get("summary"):
+            lines.append(f"\n**市场总结**\n> {an_dom['summary']}")
+
+    # 国际要闻
+    international = data.get("international") or {}
+    if international.get("sections"):
+        lines.append(f"\n## 🌍 国际要闻（{meta.get('internationalCount', 0)} 条）")
+
+        events_intl = international.get("emergencyEvents") or []
+        if events_intl:
+            lines.append("\n**🚨 突发事件**")
+            for i, e in enumerate(events_intl, 1):
+                lines.append(f"> {i}. **{e.get('title','')}** {e.get('desc','')}")
+
+        an_intl = international.get("analysis") or {}
+        if an_intl.get("summary"):
+            lines.append(f"\n**市场总结**\n> {an_intl['summary']}")
+
     body = "\n".join(lines)
 
     # 尾部是「必须保留」的部分：免责声明属于投资类内容的合规要求，网页链接是这条
@@ -795,7 +714,7 @@ def build_finance_markdown(data, dashboard_url):
     tail_lines = []
     if sg.get("risk"):
         tail_lines.append(f"\n> _{sg['risk']}_")
-    tail_lines.append(f"\n> 过去 24 小时共收录 **{meta['total']}** 条财经资讯")
+    tail_lines.append(f"\n> 共收录 **国内 {meta.get('domesticCount', 0)}** 条 + **国际 {meta.get('internationalCount', 0)}** 条")
     if dashboard_url:
         tail_lines.append(f"\n[💹 查看财经日报完整网页]({safe_md_url(dashboard_url)})")
     return body, "\n".join(tail_lines)
@@ -881,30 +800,66 @@ def main():
         print(f"     [!] 行情抓取失败，继续执行：{exc!r}")
 
     print(f"[2/5] 抓取财经快讯（过去 {args.hours} 小时）...")
-    items = fetch_finance_items(hours=args.hours)
-    if not items:
+    items_grouped = fetch_finance_items(hours=args.hours)
+    items_domestic = items_grouped["domestic"]
+    items_international = items_grouped["international"]
+
+    if not items_domestic and not items_international:
         print("     [!] 未抓到任何财经条目，终止本次财经日报（不影响 AI 日报）。")
         return
-    translate_finance_items(items)
-    sections = classify_sections(items)
-    print(f"     板块：{[(s['label'], len(s['items'])) for s in sections]}")
 
-    print("[3/5] LLM 生成突发事件 + 总结 + 市场分析 ...")
-    analysis_ok = False
-    try:
-        analysis = generate_analysis(items, quotes)
-        analysis_ok = bool(analysis.get("summary"))
-        print(f"     突发事件 {len(analysis.get('emergencyEvents') or [])} 条，总结 {len(analysis.get('summary',''))} 字")
-    except Exception as exc:
-        analysis = dict(ANALYSIS_FALLBACK)
-        print(f"     [!] 分析生成失败，使用占位文案：{exc!r}")
+    # 翻译国际新闻
+    if items_international:
+        print("     [2.1] 翻译国际要闻 ...")
+        translate_finance_items(items_international)
+
+    # 分板块
+    sections_domestic = classify_sections(items_domestic, SECTION_RULES_DOMESTIC) if items_domestic else []
+    sections_international = classify_sections(items_international, SECTION_RULES_INTERNATIONAL) if items_international else []
+    print(f"     国内板块：{[(s['label'], len(s['items'])) for s in sections_domestic]}")
+    print(f"     国际板块：{[(s['label'], len(s['items'])) for s in sections_international]}")
+
+    print("[3/5] LLM 生成市场分析（国内 + 国际）...")
+    # 国内市场分析
+    analysis_domestic_ok = False
+    if items_domestic:
+        try:
+            analysis_domestic = generate_analysis(items_domestic, quotes, market_label="国内")
+            analysis_domestic_ok = bool(analysis_domestic.get("summary"))
+            print(f"     国内：突发事件 {len(analysis_domestic.get('emergencyEvents') or [])} 条，总结 {len(analysis_domestic.get('summary',''))} 字")
+        except Exception as exc:
+            analysis_domestic = dict(ANALYSIS_FALLBACK)
+            print(f"     [!] 国内分析生成失败：{exc!r}")
+    else:
+        analysis_domestic = dict(ANALYSIS_FALLBACK)
+        print("     跳过国内分析（无国内新闻）")
+
+    # 国际市场分析
+    analysis_international_ok = False
+    if items_international:
+        try:
+            analysis_international = generate_analysis(items_international, quotes, market_label="国际")
+            analysis_international_ok = bool(analysis_international.get("summary"))
+            print(f"     国际：突发事件 {len(analysis_international.get('emergencyEvents') or [])} 条，总结 {len(analysis_international.get('summary',''))} 字")
+        except Exception as exc:
+            analysis_international = dict(ANALYSIS_FALLBACK)
+            print(f"     [!] 国际分析生成失败：{exc!r}")
+    else:
+        analysis_international = dict(ANALYSIS_FALLBACK)
+        print("     跳过国际分析（无国际新闻）")
 
     print("[4/5] LLM 生成 A股/港股策略建议 ...")
-    # 必须用显式的 analysis_ok 标志：兜底赋的是 dict(ANALYSIS_FALLBACK) 副本，
-    # 用 `is not ANALYSIS_FALLBACK` 判断永远为真，会把占位文案当成真分析喂给策略模型。
-    if analysis_ok:
+    # 策略需要综合国内外分析
+    if analysis_domestic_ok or analysis_international_ok:
         try:
-            strategy = generate_strategy(analysis, quotes)
+            # 合并两个市场的分析结论作为策略生成的输入
+            combined_analysis = {
+                "summary": (analysis_domestic.get("summary", "") + "\n\n" + analysis_international.get("summary", "")).strip(),
+                "macro": (analysis_domestic.get("macro", "") + "\n\n" + analysis_international.get("macro", "")).strip(),
+                "sector": (analysis_domestic.get("sector", "") + "\n\n" + analysis_international.get("sector", "")).strip(),
+                "emergencyEvents": (analysis_domestic.get("emergencyEvents") or []) + (analysis_international.get("emergencyEvents") or []),
+            }
+            strategy = generate_strategy(combined_analysis, quotes)
             print(f"     A股 {len(strategy.get('aShare',''))} 字，港股 {len(strategy.get('hkShare',''))} 字")
         except Exception as exc:
             strategy = dict(STRATEGY_FALLBACK)
@@ -913,7 +868,8 @@ def main():
         strategy = dict(STRATEGY_FALLBACK)
         print("     跳过：上一步分析未生成")
 
-    data = shape_finance(sections, quotes, analysis, strategy, window_hours=args.hours)
+    data = shape_finance(sections_domestic, sections_international, quotes,
+                        analysis_domestic, analysis_international, strategy, window_hours=args.hours)
 
     out_html = os.path.join(HERE, "finance_dashboard.html")
     open(out_html, "w", encoding="utf-8").write(build_finance_html(data))
@@ -971,6 +927,59 @@ def main():
         return
 
     print("[5/5] 未配置推送渠道（WECOM_WEBHOOK / FEISHU_WEBHOOK），仅生成网页。")
+
+    # 微信公众号发布（独立于推送渠道）
+    wechat_cfg = cfg.get("wechat_official", {}) or {}
+    wechat_enabled = wechat_cfg.get("enabled", False)
+    wechat_appid = (os.environ.get("WECHAT_APPID") or wechat_cfg.get("appid", "")).strip()
+    wechat_appsecret = (os.environ.get("WECHAT_APPSECRET") or wechat_cfg.get("appsecret", "")).strip()
+
+    if wechat_enabled and wechat_appid and wechat_appsecret:
+        print("\n[额外] 发布到微信公众号...")
+        try:
+            from wechat_official import publish_to_wechat
+            from wechat_content_builder import (
+                html_to_wechat_finance_article,
+                prepare_finance_daily_cover
+            )
+
+            # 准备封面图
+            cover_path = prepare_finance_daily_cover(HERE)
+            if not cover_path:
+                print("     [!] 封面图准备失败，跳过公众号发布")
+            else:
+                # 准备内容
+                article_title = f"财经日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%Y年%m月%d日')}"
+                article_content = html_to_wechat_finance_article(
+                    open(out_html, encoding="utf-8").read(),
+                    article_title,
+                    dashboard_url
+                )
+                article_digest = f"股市行情 · 财经快讯 · 市场分析 · 策略建议 · 共 {data['meta']['total']} 条资讯"
+
+                # 发布
+                publish_id = publish_to_wechat(
+                    appid=wechat_appid,
+                    appsecret=wechat_appsecret,
+                    title=article_title,
+                    content=article_content,
+                    author="AI Daily Push",
+                    digest=article_digest,
+                    content_source_url=dashboard_url,
+                    thumb_image_path=cover_path
+                )
+
+                if publish_id:
+                    print(f"     ✓ 公众号发布成功！publish_id: {publish_id}")
+                else:
+                    print("     [!] 公众号发布失败")
+
+        except ImportError as e:
+            print(f"     [!] 缺少微信公众号发布模块：{e!r}")
+        except Exception as e:
+            print(f"     [!] 公众号发布异常：{e!r}")
+    elif wechat_enabled:
+        print("\n[额外] 微信公众号已启用但缺少 appid/appsecret，跳过发布")
 
 
 if __name__ == "__main__":

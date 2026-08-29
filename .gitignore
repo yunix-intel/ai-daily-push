@@ -1,2 +1,4 @@
 __pycache__/
 *.pyc
+.wechat_token_cache.json
+push_config.json

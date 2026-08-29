@@ -116,30 +116,103 @@ def fetch_rss(source_name, url, limit=8):
 
 EXTRA_SECTION_LABEL = "全网 AI 资讯"
 
+# ----------------------------- 智能分类规则 -----------------------------
+# 按内容性质重新分类，而不是直接使用 AI HOT 的官方分类
+SECTION_RULES = [
+    ("📊 行业趋势", ["ARR", "营收", "年度经常性收入", "revenue", "token", "API调用", "用户增长",
+                      "市场规模", "市值", "股价", "财报", "季度", "年报", "增长率", "同比", "环比"]),
+    ("🏢 产业动态", ["融资", "收购", "并购", "IPO", "上市", "投资", "亿美元", "轮融资",
+                      "发布", "推出", "宣布", "更新", "升级", "裁员", "重组", "合作", "partnership",
+                      "封杀", "禁令", "监管"]),
+    ("📰 行业资讯", ["分析", "报告", "调查", "研究显示", "趋势", "预测", "展望", "观点", "评论",
+                      "市场", "竞争", "政策", "法规", "诉讼", "起诉"]),
+    ("💼 商业应用", ["企业", "客户", "落地", "案例", "方案", "B2B", "B2C", "SaaS",
+                      "部署", "实施", "采用", "使用", "效率", "降本", "增效"]),
+    ("🛠️ 开发者工具", ["开源", "GitHub", "API", "SDK", "框架", "库", "工具", "模型", "dataset",
+                       "Hugging Face", "版本", "release", "支持"]),
+    ("🔬 学术研究", ["arXiv", "论文", "研究", "breakthrough", "算法", "architecture", "训练",
+                      "benchmark", "SOTA", "实验", "方法", "technique", "提出"]),
+]
+DEFAULT_SECTION = "其他资讯"  # 未命中任何规则的兜底分类
+
+
+def classify_ai_items(items):
+    """智能分类：按关键词匹配将条目分到对应板块。
+
+    items: AI HOT + RSS 聚合后的所有条目（扁平列表）
+    返回：按新分类规则组织的 sections
+    """
+    buckets = {label: [] for label, _ in SECTION_RULES}
+    buckets[DEFAULT_SECTION] = []
+
+    for item in items:
+        text = f"{item.get('title', '')} {item.get('summary', '')} {item.get('originalTitle', '')}".lower()
+        placed = False
+
+        for label, keywords in SECTION_RULES:
+            if any(kw.lower() in text for kw in keywords):
+                buckets[label].append(item)
+                placed = True
+                break
+
+        if not placed:
+            buckets[DEFAULT_SECTION].append(item)
+
+    # 只返回非空板块，按定义顺序排列
+    result = []
+    for label, _ in SECTION_RULES:
+        if buckets[label]:
+            result.append({"label": label, "items": buckets[label]})
+    if buckets[DEFAULT_SECTION]:
+        result.append({"label": DEFAULT_SECTION, "items": buckets[DEFAULT_SECTION]})
+
+    return result
+
+
 def aggregate_sources(primary):
-    sections = [{"label": s.get("label", ""), "items": list(s.get("items", []))} for s in primary.get("sections", [])]
-    extra_items = []
+    """聚合 AI HOT 和 RSS 源，然后统一重新分类。"""
+    # 收集所有条目（扁平化）
+    all_items = []
+    seen = set()
+
+    # 从 AI HOT 收集
+    for s in primary.get("sections", []):
+        for item in s.get("items", []):
+            key = re.sub(r"\W+", "", item.get("title", "").lower())
+            if key and key not in seen:
+                seen.add(key)
+                all_items.append(item)
+
+    # 从 RSS 源收集
     for source_name, url in RSS_FEEDS:
         try:
             source_items = fetch_rss(source_name, url)
-            extra_items.extend(source_items)
+            for item in source_items:
+                key = re.sub(r"\W+", "", item["title"].lower())
+                if item["title"] and key and key not in seen:
+                    seen.add(key)
+                    all_items.append({
+                        "title": item["title"],
+                        "summary": item["summary"],
+                        "source": {"name": item["source"]},
+                        "links": {"original": item["link"], "aihot": item["link"]}
+                    })
             print(f"     {source_name}：抓取 {len(source_items)} 条")
         except Exception as exc:
             print(f"     来源跳过：{source_name}（{exc}）")
-    # 若主源已有同名版块（如 AI HOT 恰好也用了这个标签），合并进去而不是新建重复标签
-    target_section = next((s for s in sections if s["label"] == EXTRA_SECTION_LABEL), None)
-    if target_section is None:
-        target_section = {"label": EXTRA_SECTION_LABEL, "items": []}
-        if extra_items or not sections:
-            sections.append(target_section)
-    seen = {re.sub(r"\W+", "", item.get("title", "").lower()) for section in sections for item in section["items"]}
-    target = target_section["items"]
-    for item in extra_items:
-        key = re.sub(r"\W+", "", item["title"].lower())
-        if item["title"] and key and key not in seen:
-            seen.add(key)
-            target.append({"title": item["title"], "summary": item["summary"], "source": {"name": item["source"]}, "links": {"original": item["link"], "aihot": item["link"]}})
-    return {"date": primary.get("date", ""), "windowStart": primary.get("windowStart", ""), "windowEnd": primary.get("windowEnd", ""), "generatedAt": primary.get("generatedAt", ""), "attribution": primary.get("attribution", {}), "links": primary.get("links", {}), "sections": sections}
+
+    # 统一智能分类
+    sections = classify_ai_items(all_items)
+
+    return {
+        "date": primary.get("date", ""),
+        "windowStart": primary.get("windowStart", ""),
+        "windowEnd": primary.get("windowEnd", ""),
+        "generatedAt": primary.get("generatedAt", ""),
+        "attribution": primary.get("attribution", {}),
+        "links": primary.get("links", {}),
+        "sections": sections
+    }
 
 TRANSLATE_API = "https://api.mymemory.translated.net/get"
 
@@ -729,9 +802,61 @@ def main():
         print("     pushplus 返回：", resp)
         if isinstance(resp, dict) and resp.get("code") != 200:
             print("     ⚠️ 推送可能失败，请检查返回信息。")
-        return
+    else:
+        print("[4/4] 未配置任何推送渠道（企业微信 WECOM_CORPID/SECRET/AGENTID 或 pushplus PUSHPLUS_TOKEN），跳过推送。")
 
-    print("[4/4] 未配置任何推送渠道（企业微信 WECOM_CORPID/SECRET/AGENTID 或 pushplus PUSHPLUS_TOKEN），跳过推送。")
+    # 微信公众号发布（独立于推送渠道）
+    wechat_cfg = cfg.get("wechat_official", {}) or {}
+    wechat_enabled = wechat_cfg.get("enabled", False)
+    wechat_appid = (os.environ.get("WECHAT_APPID") or wechat_cfg.get("appid", "")).strip()
+    wechat_appsecret = (os.environ.get("WECHAT_APPSECRET") or wechat_cfg.get("appsecret", "")).strip()
+
+    if wechat_enabled and wechat_appid and wechat_appsecret:
+        print("\n[额外] 发布到微信公众号...")
+        try:
+            from wechat_official import publish_to_wechat
+            from wechat_content_builder import (
+                html_to_wechat_article,
+                prepare_ai_daily_cover
+            )
+
+            # 准备封面图
+            cover_path = prepare_ai_daily_cover(HERE)
+            if not cover_path:
+                print("     [!] 封面图准备失败，跳过公众号发布")
+            else:
+                # 准备内容
+                article_title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%Y年%m月%d日')}"
+                article_content = html_to_wechat_article(
+                    open(out_html, encoding="utf-8").read(),
+                    article_title,
+                    dashboard_url
+                )
+                article_digest = f"AI 行业动态与技术突破 · 共 {data['meta']['total']} 条资讯"
+
+                # 发布
+                publish_id = publish_to_wechat(
+                    appid=wechat_appid,
+                    appsecret=wechat_appsecret,
+                    title=article_title,
+                    content=article_content,
+                    author="AI Daily Push",
+                    digest=article_digest,
+                    content_source_url=dashboard_url,
+                    thumb_image_path=cover_path
+                )
+
+                if publish_id:
+                    print(f"     ✓ 公众号发布成功！publish_id: {publish_id}")
+                else:
+                    print("     [!] 公众号发布失败")
+
+        except ImportError as e:
+            print(f"     [!] 缺少微信公众号发布模块：{e!r}")
+        except Exception as e:
+            print(f"     [!] 公众号发布异常：{e!r}")
+    elif wechat_enabled:
+        print("\n[额外] 微信公众号已启用但缺少 appid/appsecret，跳过发布")
 
 if __name__ == "__main__":
     main()

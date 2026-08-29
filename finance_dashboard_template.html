@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>财经日报 · 晨报仪表盘</title>
+<style>
+  :root{--bg:#0e1014;--bg2:#151922;--card:#171c26;--card-hover:#1e2531;--border:#272f3d;--text:#e8ecf3;--muted:#9aa4b2;--accent:#f0b429;--accent2:#37e0b0;--up:#ff5b5b;--down:#3ddc84;--warn:#ff7a45;--chip:#222b39;--shadow:rgba(0,0,0,.45);--domestic:#5b9eff;--intl:#ff8c42;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:radial-gradient(1200px 600px at 80% -10%, #2a2213 0%, var(--bg) 55%) fixed;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 18px}
+  .hero{padding:30px 0 16px}
+  .kicker{display:inline-flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.18em;color:var(--accent);border:1px solid var(--border);padding:5px 12px;border-radius:999px;background:var(--bg2)}
+  .hero h1{font-size:clamp(24px,4vw,36px);font-weight:800;margin:12px 0 4px;letter-spacing:-.5px}
+  .hero h1 .sub{color:var(--accent)}
+  .hero .date{font-size:15px;color:var(--text);font-weight:600}
+  .hero .window{font-size:13px;color:var(--muted);margin-top:2px}
+  .quotes{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .quote{display:inline-flex;align-items:baseline;gap:7px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:7px 13px}
+  .quote .qn{font-size:12.5px;color:var(--muted)}
+  .quote .qp{font-size:15px;font-weight:800}
+  .quote .qc{font-size:12.5px;font-weight:700}
+  .quote.up .qp,.quote.up .qc{color:var(--up)}
+  .quote.down .qp,.quote.down .qc{color:var(--down)}
+  .stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .stat{display:inline-flex;align-items:baseline;gap:5px;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:5px 12px}
+  .stat .num{font-size:14px;font-weight:800;color:var(--accent)}
+  .stat .lbl{font-size:12px;color:var(--muted)}
+  .stat.total .num{color:var(--accent2)}
+  .stat.domestic .num{color:var(--domestic)}
+  .stat.intl .num{color:var(--intl)}
+  .block{margin:14px 0 0;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .block h2{font-size:14px;font-weight:800;color:var(--accent2);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+  .block p{font-size:13.5px;color:#c9d1dc;margin-bottom:8px;text-align:justify}
+  .block p:last-child{margin-bottom:0}
+  .block .sub-h{font-size:12.5px;font-weight:800;color:var(--accent);margin:10px 0 3px}
+  .block.emergency{background:linear-gradient(135deg,#33210f,#1d1710);border-color:var(--warn)}
+  .block.emergency h2{color:var(--warn)}
+  .block.emergency ol{list-style:none;counter-reset:ev}
+  .block.emergency li{counter-increment:ev;display:flex;gap:8px;padding:5px 0;border-bottom:1px dashed var(--border)}
+  .block.emergency li:last-child{border-bottom:none}
+  .block.emergency li::before{content:counter(ev);flex:0 0 auto;width:18px;height:18px;border-radius:5px;background:var(--warn);color:#1a1109;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
+  .ev-t{font-size:13.5px;font-weight:700;text-align:justify}
+  .ev-d{font-size:12.5px;color:#c9d1dc;text-align:justify}
+  .ev-i{font-size:12px;color:var(--accent);text-align:justify}
+  .block.strategy{background:linear-gradient(135deg,#12281f,#141a18);border-color:var(--accent2)}
+  .risk{font-size:12px;color:#9aa4b2;border-top:1px solid var(--border);padding-top:8px;margin-top:8px}
+  .market-divider{margin:32px 0 24px;padding:16px 20px;background:linear-gradient(90deg,rgba(91,158,255,.15),transparent);border-left:4px solid var(--domestic);border-radius:8px}
+  .market-divider.intl{background:linear-gradient(90deg,rgba(255,140,66,.15),transparent);border-left-color:var(--intl)}
+  .market-divider h2{font-size:22px;font-weight:800;display:flex;align-items:center;gap:10px}
+  .market-divider h2 .badge{font-size:13px;background:var(--domestic);color:#fff;padding:4px 10px;border-radius:999px;font-weight:700}
+  .market-divider.intl h2 .badge{background:var(--intl)}
+  .nav{position:sticky;top:0;z-index:20;background:rgba(14,16,20,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);margin-top:14px}
+  .nav .wrap{display:flex;gap:10px;overflow-x:auto;padding:12px 18px;scrollbar-width:thin}
+  .nav a{flex:0 0 auto;font-size:13.5px;color:var(--muted);border:1px solid var(--border);background:var(--bg2);padding:7px 13px;border-radius:999px;white-space:nowrap;transition:.15s}
+  .nav a:hover{color:var(--text);border-color:var(--accent)}
+  .nav a b{color:var(--accent);font-weight:700;margin-left:6px}
+  main{padding:28px 0 10px}
+  .section{margin-bottom:38px;scroll-margin-top:64px}
+  .section-head{display:flex;align-items:baseline;gap:12px;margin-bottom:16px;border-left:4px solid var(--accent);padding-left:12px}
+  .section-head h2{font-size:21px;font-weight:750}
+  .section-head .count{font-size:14px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:16px}
+  .card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px;transition:.18s}
+  .card:hover{background:var(--card-hover);border-color:#4a4230;transform:translateY(-2px);box-shadow:0 10px 26px var(--shadow)}
+  .card .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
+  .card .idx{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#c98f10);color:#1a1109;font-weight:800;font-size:15px;flex:0 0 auto}
+  .chip{font-size:12px;color:var(--muted);background:var(--chip);border:1px solid var(--border);padding:4px 10px;border-radius:999px;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card h3{font-size:16.5px;font-weight:700;line-height:1.45;margin-bottom:9px;text-align:justify}
+  .card h3 a:hover{color:var(--accent)}
+  .card .summary{font-size:14px;color:#c4ccd8;flex:1;margin-bottom:10px;text-align:justify}
+  .card .original-text{font-size:12.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;margin-bottom:14px;text-align:justify}
+  .card .foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .src{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .linkgroup{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .orig{font-size:13px;font-weight:600;color:var(--accent);border:1px solid var(--border);padding:6px 12px;border-radius:10px;background:var(--bg2);white-space:nowrap;transition:.15s}
+  .orig:hover{background:var(--accent);color:#1a1109;border-color:var(--accent)}
+  footer{border-top:1px solid var(--border);margin-top:18px;padding:26px 0 50px;color:var(--muted);font-size:13.5px}
+  .note{font-size:12.5px;color:#6f7a8a;margin-top:10px}
+  @media (max-width:560px){.hero{padding:22px 0 12px}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="hero"><div class="wrap">
+  <span class="kicker">● 财经日报 · 多来源聚合</span>
+  <h1>财经日报 <span class="sub">晨报仪表盘</span></h1>
+  <div class="date" id="heroDate">—</div>
+  <div class="window" id="heroWindow">—</div>
+  <div class="quotes" id="heroQuotes"></div>
+  <div class="stats" id="heroStats"></div>
+  <div class="block strategy" id="strategyBlock" style="display:none">
+    <h2>🎯 今日策略建议</h2>
+    <div id="strategyBody"></div>
+  </div>
+</div></header>
+<nav class="nav"><div class="wrap" id="navLinks"></div></nav>
+<main class="wrap" id="main"></main>
+<footer><div class="wrap">
+  <div id="footerMeta">—</div>
+  <div class="note">本站仅作信息聚合与自动化分析展示，资讯版权归原作者所有；分析与策略由程序自动生成，不构成投资建议。</div>
+</div></footer>
+<script>
+const DATA = __DATA_PLACEHOLDER__;
+function fmtBeijing(iso, opts){try{const dt=new Date(iso);const o=Object.assign({timeZone:'Asia/Shanghai',hour12:false},opts||{});return new Intl.DateTimeFormat('zh-CN',o).format(dt);}catch(e){return iso;}}
+function truncate(s,n){const arr=Array.from(s||'');if(arr.length<=n)return s||'';return arr.slice(0,n-1).join('')+'…';}
+function esc(s){return (s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='http:'||p==='https:')?u:'#';}catch(e){return '#';}}
+(function render(){
+  const meta=DATA.meta, domestic=DATA.domestic||{}, international=DATA.international||{};
+  document.getElementById('heroDate').textContent=fmtBeijing(meta.date+'T00:00:00+08:00',{year:'numeric',month:'long',day:'numeric',weekday:'long'})+'（北京时间）';
+  document.getElementById('heroWindow').textContent='收录窗口：'+fmtBeijing(meta.windowStart,{month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})+' — '+fmtBeijing(meta.windowEnd,{month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})+'（北京时间，过去 24 小时）';
+  const quotes=DATA.quotes||[];
+  document.getElementById('heroQuotes').innerHTML=quotes.map(q=>{
+    const cls=q.pct>0?'up':(q.pct<0?'down':'');
+    const sign=q.pct>0?'+':'';
+    return '<span class="quote '+cls+'"><span class="qn">'+esc(q.name)+'</span><span class="qp">'+q.price+'</span><span class="qc">'+sign+q.pct.toFixed(2)+'%</span></span>';
+  }).join('');
+  let st='<div class="stat total"><div class="num">'+meta.total+'</div><div class="lbl">总条数</div></div>';
+  st+='<div class="stat domestic"><div class="num">'+meta.domesticCount+'</div><div class="lbl">国内要闻</div></div>';
+  st+='<div class="stat intl"><div class="num">'+meta.internationalCount+'</div><div class="lbl">国际要闻</div></div>';
+  document.getElementById('heroStats').innerHTML=st;
+  const sg=DATA.strategy||{};
+  let sb='';
+  if(sg.aShare) sb+='<div class="sub-h">A 股</div><p>'+esc(sg.aShare)+'</p>';
+  if(sg.hkShare) sb+='<div class="sub-h">港股</div><p>'+esc(sg.hkShare)+'</p>';
+  if(sg.risk) sb+='<div class="risk">'+esc(sg.risk)+'</div>';
+  if(sb){document.getElementById('strategyBlock').style.display='';document.getElementById('strategyBody').innerHTML=sb;}
+  let nav='<a href="#domestic-section">国内要闻<b>'+meta.domesticCount+'</b></a><a href="#intl-section">国际要闻<b>'+meta.internationalCount+'</b></a>';
+  document.getElementById('navLinks').innerHTML=nav;
+  let main='';
+  function renderMarket(marketData, marketId, marketLabel, badgeColor){
+    const events=marketData.emergencyEvents||[];
+    const an=marketData.analysis||{};
+    const sections=marketData.sections||[];
+    if(!sections.length && !an.summary && !events.length) return '';
+    let html='<div class="market-divider'+(marketId==='intl'?' intl':'')+'" id="'+marketId+'-section"><h2>'+marketLabel+'<span class="badge">'+sections.reduce((s,sec)=>s+sec.items.length,0)+' 条</span></h2></div>';
+    if(events.length){
+      html+='<div class="block emergency"><h2>🚨 突发事件</h2><ol>';
+      events.forEach(e=>{html+='<li><div><div class="ev-t">'+esc(e.title)+'</div><div class="ev-d">'+esc(e.desc)+'</div>'+(e.impact?'<div class="ev-i">影响：'+esc(e.impact)+'</div>':'')+'</div></li>';});
+      html+='</ol></div>';
+    }
+    if(an.summary){html+='<div class="block"><h2>📝 市场总结</h2><p>'+esc(an.summary)+'</p></div>';}
+    if(an.macro||an.sector){
+      html+='<div class="block"><h2>📈 市场分析</h2>';
+      if(an.macro) html+='<div class="sub-h">宏观与资金面</div><p>'+esc(an.macro)+'</p>';
+      if(an.sector) html+='<div class="sub-h">板块与行业</div><p>'+esc(an.sector)+'</p>';
+      html+='</div>';
+    }
+    sections.forEach((s,i)=>{html+='<section class="section" id="'+marketId+'-sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
+      s.items.forEach(it=>{const orig=safeUrl(it.original||'#');const tp=safeUrl(it.translatedPage||'');
+        html+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
+        html+='<h3><a href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
+        html+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
+        if(it.originalTitle!==it.title||it.originalSummary!==it.summary) html+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+'</p>';
+        html+='<div class="foot"><span class="src">'+esc(it.source)+'</span><span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span></div></article>';});
+      html+='</div></section>';});
+    return html;
+  }
+  main+=renderMarket(domestic,'domestic','🇨🇳 国内要闻');
+  main+=renderMarket(international,'intl','🌍 国际要闻');
+  document.getElementById('main').innerHTML=main;
+  const sources='格隆汇、同花顺、金十数据、第一财经、财新网、Seeking Alpha、Bloomberg、CNBC';
+  document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：'+sources+' · 行情：腾讯财经';
+})();
+</script>
+</body></html>

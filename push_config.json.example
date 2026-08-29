@@ -1,0 +1,13 @@
+{
+  "wecom": {
+    "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_WECOM_KEY"
+  },
+  "feishu": {
+    "webhook_url": ""
+  },
+  "wechat_official": {
+    "appid": "wx1234567890abcdef",
+    "appsecret": "your_32_character_appsecret_here",
+    "enabled": false
+  }
+}
