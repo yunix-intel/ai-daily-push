@@ -99,7 +99,8 @@ def fetch_quotes():
 # rsshub 镜像列表：主镜像失败时自动尝试备用镜像（故障转移）
 RSSHUB_MIRRORS = [
     "https://rsshub.rssforever.com",
-    "https://rsshub.app",
+    "https://rsshub.liumingye.cn",
+    "https://rsshub.ktachibana.party",
 ]
 
 FINANCE_FEEDS_ZH = [
@@ -148,10 +149,14 @@ def _fetch_rss_with_mirrors(source_name, path, limit=20):
 
     # 中文源：path 是相对路径，遍历镜像列表
     last_exc = None
-    for mirror in RSSHUB_MIRRORS:
+    for idx, mirror in enumerate(RSSHUB_MIRRORS):
         url = mirror + path
         try:
-            return fetch_rss(source_name, url, limit=limit)
+            items = fetch_rss(source_name, url, limit=limit)
+            if idx > 0:
+                # 只有在非首个镜像成功时才打印（说明发生了故障转移）
+                print(f"     [!] {source_name} 主镜像失败，已从备用镜像 #{idx+1} 成功抓取")
+            return items
         except Exception as exc:
             last_exc = exc
             continue  # 尝试下一个镜像
