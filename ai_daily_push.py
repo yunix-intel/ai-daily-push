@@ -35,6 +35,17 @@ UA = "aihot-skill/1.2.1 (+https://aihot.virxact.com/aihot-skill/)"
 CST_OFFSET = timedelta(hours=8)
 HERE = __import__("os").path.dirname(__import__("os").path.abspath(__file__))
 
+# Windows 下重定向 stdout 默认走 GBK，日志/预览里的 emoji（⭐ 等）会抛
+# UnicodeEncodeError 把整个流程带崩——打印细节绝不该杀掉任务。统一把标准流切成
+# UTF-8，且无法编码时降级替换而不是抛异常。
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # ----------------------------- 网络 -----------------------------
 def http_get(url):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
@@ -92,7 +103,14 @@ def fetch_rss(source_name, url, limit=8):
         atom_link = entry.find("{http://www.w3.org/2005/Atom}link")
         if atom_link is not None:
             link = atom_link.get("href", link)
-        result.append({"title": text("title", "{http://www.w3.org/2005/Atom}title"), "summary": text("description", "summary", "{http://www.w3.org/2005/Atom}summary"), "link": link, "source": source_name})
+        result.append({
+            "title": text("title", "{http://www.w3.org/2005/Atom}title"),
+            "summary": text("description", "summary", "{http://www.w3.org/2005/Atom}summary"),
+            "link": link,
+            "source": source_name,
+            # 财经日报要按「过去 24 小时」过滤，这里一并取出发布时间；AI 日报不读这个字段。
+            "published": text("pubDate", "{http://www.w3.org/2005/Atom}updated", "{http://www.w3.org/2005/Atom}published"),
+        })
     return result
 
 
@@ -136,11 +154,14 @@ PROTECTED_TERMS = [
 PROTECTED_TERMS.sort(key=len, reverse=True)
 
 
-def _protect_terms(text):
+def _protect_terms(text, terms=None):
     """用占位符保护专有名词。token 用 ASCII 字母数字（QQZ...ZQQ）而非符号，
-    降低被翻译引擎当作普通文本插入空格/标点的概率。"""
+    降低被翻译引擎当作普通文本插入空格/标点的概率。
+    terms 为 None 时用 AI 语境的 PROTECTED_TERMS；财经日报会传入自己的术语表。"""
     placeholders = {}
-    for i, term in enumerate(PROTECTED_TERMS):
+    # 长名称先匹配（如 "Federal Reserve" 先于 "Fed"），避免子串被提前替换。
+    term_list = sorted(terms, key=len, reverse=True) if terms else PROTECTED_TERMS
+    for i, term in enumerate(term_list):
         token = f"QQZ{i}ZQQ"
         pattern = re.compile(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])")
         if pattern.search(text):
@@ -162,12 +183,12 @@ def _has_leftover_placeholder(text):
     return bool(re.search(r"QQZ\s*\d+\s*ZQQ", text))
 
 
-def translate_text(text, target="zh-CN", retries=3):
+def translate_text(text, target="zh-CN", retries=3, terms=None):
     if not text or not re.search(r"[A-Za-z]", text):
         return text
     text = html.unescape(text)
     text = re.sub(r"\s+", " ", text).strip()[:490]
-    protected_text, placeholders = _protect_terms(text)
+    protected_text, placeholders = _protect_terms(text, terms=terms)
     query = urllib.parse.urlencode({"q": protected_text, "langpair": f"en|{target}"})
     req = urllib.request.Request(f"{TRANSLATE_API}?{query}", headers={"User-Agent": "Mozilla/5.0"})
     last_exc = None
@@ -192,12 +213,21 @@ def translate_text(text, target="zh-CN", retries=3):
     raise last_exc
 
 
-def translate_items(report):
-    translated, failed = 0, 0
+def translate_items(report, give_up_after=6):
+    """英文条目译中文并保留原文；失败回退原文，不中断整体流程。
+
+    连续 give_up_after 条都失败就放弃剩余翻译：MyMemory 按 IP 限流，被限流后
+    每条都要重试到超时（实测单条约 17s），几十条能拖十几分钟。保留原文即可，
+    网页和推送本来就同时展示原文。
+    """
+    translated, failed, consecutive_fail = 0, 0, 0
+    gave_up = False
     for section in report.get("sections", []):
         for item in section.get("items", []):
             item["originalTitle"] = item.get("title", "")
             item["originalSummary"] = item.get("summary", "")
+            if gave_up:
+                continue
             ok = True
             try:
                 item["title"] = translate_text(item["title"])
@@ -213,9 +243,15 @@ def translate_items(report):
                 print(f"     摘要翻译失败，保留英文原文：{exc}")
             if ok:
                 translated += 1
+                consecutive_fail = 0
             else:
                 failed += 1
-    print(f"     翻译完成：{translated} 条，失败：{failed} 条")
+                consecutive_fail += 1
+                if consecutive_fail >= give_up_after:
+                    gave_up = True
+                    print(f"     [!] 连续 {consecutive_fail} 条翻译失败（疑似接口限流），"
+                          f"放弃剩余翻译，全部保留英文原文。")
+    print(f"     翻译完成：{translated} 条，失败：{failed} 条" + ("（已提前放弃）" if gave_up else ""))
     return report
 
 # ----------------------------- 重要新闻打分 -----------------------------

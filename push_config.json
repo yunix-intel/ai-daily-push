@@ -10,5 +10,10 @@
   "pushplus_token": "",
   "pushplus_topic": "",
   "dashboard_url": "https://yunix-intel.github.io/ai-daily-push/",
-  "_说明": "推送渠道优先级：飞书群机器人(FEISHU_WEBHOOK) > 企业微信群机器人(WECOM_WEBHOOK) > 企业微信应用消息 > pushplus。群机器人均无需 IP 白名单。dashboard_url 已指向你的 GitHub Pages，推送末尾会附『查看完整网页』链接/按钮，点开即浏览器样式仪表盘。飞书 webhook 形如 https://open.feishu.cn/open-apis/bot/v2/hook/xxx。"
+  "finance_dashboard_url": "https://yunix-intel.github.io/ai-daily-push/finance.html",
+  "openai_api_key": "",
+  "openai_base_url": "",
+  "openai_model_translate": "",
+  "openai_model_analysis": "",
+  "_说明": "推送渠道优先级：飞书群机器人(FEISHU_WEBHOOK) > 企业微信群机器人(WECOM_WEBHOOK) > 企业微信应用消息 > pushplus。群机器人均无需 IP 白名单。dashboard_url 是 AI 日报网页，finance_dashboard_url 是财经日报网页。财经日报的 LLM 配置：openai_base_url 填自建 OpenAI 兼容网关地址（如 https://aiapi.hk.oliga.top/v1）；openai_model_translate 默认 deepseek-v4-flash（批量翻译，便宜快）；openai_model_analysis 默认 gpt-5.6-sol（总结/分析/策略，需要推理能力，实测 deepseek-v4-flash 在长 prompt 上会 504 超时）。生产环境密钥用 OPENAI_API_KEY Secret，不要写进本文件。"
 }

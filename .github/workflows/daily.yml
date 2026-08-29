@@ -1,4 +1,4 @@
-name: AI 日报每日推送（企业微信 + GitHub Pages）
+name: 每日推送：AI 日报 + 财经日报（企业微信 + GitHub Pages）
 
 on:
   schedule:
@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 拉取 + 翻译 + 生成仪表盘 + 推送企业微信
+      - name: 第一条：AI 日报（图文卡片 + AI 日报网页）
         env:
           WECOM_CORPID: ${{ secrets.WECOM_CORPID }}
           WECOM_CORPSECRET: ${{ secrets.WECOM_CORPSECRET }}
@@ -38,8 +38,28 @@ jobs:
 
         run: python ai_daily_push.py
 
-      - name: 准备 Pages 静态产物
-        run: mkdir -p public && cp ai_daily_dashboard.html public/index.html
+      # 第二条独立于第一条：财经日报失败（数据源/LLM 异常）不应该让已经成功的
+      # AI 日报连带标红，所以用 continue-on-error 兜住。
+      - name: 第二条：财经日报（markdown + 财经网页）
+        continue-on-error: true
+        env:
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FINANCE_DASHBOARD_URL: ${{ secrets.FINANCE_DASHBOARD_URL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+        run: python finance_daily_push.py
+
+      - name: 准备 Pages 静态产物（两个独立页面）
+        run: |
+          mkdir -p public
+          cp ai_daily_dashboard.html public/index.html
+          # 财经日报若失败则不会产出 html，此时只发布 AI 日报页面，不让整个部署失败
+          if [ -f finance_dashboard.html ]; then
+            cp finance_dashboard.html public/finance.html
+          else
+            echo "finance_dashboard.html 不存在，跳过财经页面发布"
+          fi
 
       - name: 上传 Pages 产物
         uses: actions/upload-pages-artifact@v5
