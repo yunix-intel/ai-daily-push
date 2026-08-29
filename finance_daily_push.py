@@ -110,9 +110,10 @@ FINANCE_FEEDS_ZH = [
 ]
 # 注：WSJ 的 RSSMarketsMain 源已停更（实测最新条目停在 2025-01-27），会被 24 小时
 # 窗口全部丢弃，纯属浪费一次网络请求，故不收录。改用实测有当日内容的 Seeking Alpha。
+# MarketWatch 的 RSS 源（无论 topstories 还是 realtimeheadlines）内容质量不符合要求：
+# topstories 包含大量个人理财、职场建议等非市场资讯；realtimeheadlines 返回的是几个月前的旧闻。
 FINANCE_FEEDS_EN = [
     ("Seeking Alpha", "https://seekingalpha.com/market_currents.xml"),
-    ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
     ("CNBC Finance", "https://www.cnbc.com/id/10000664/device/rss/rss.html"),
 ]
 
