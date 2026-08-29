@@ -472,19 +472,19 @@ def generate_analysis(items, quotes, market_label="国内"):
 【{market_label}财经快讯】
 {_news_digest(items)}
 
-请输出 JSON，字段如下：
+请仅基于上述{market_label}快讯内容输出 JSON，字段如下：
 {{
   "emergencyEvents": [
     {{"title": "事件标题（15字内）", "desc": "50字内说明发生了什么", "impact": "30字内说明对市场可能的影响方向"}}
   ],
-  "summary": "今日{market_label}市场总结，150-250字，概括过去24小时最值得关注的几条线索",
+  "summary": "{market_label}市场总结，150-250字，概括过去24小时最值得关注的几条线索",
   "macro": "宏观与资金面分析，150-250字，涉及政策、利率、汇率、外部市场",
   "sector": "板块与行业分析，150-250字，指出受关注或受压的方向"
 }}
 
-emergencyEvents 只收录真正的突发/异常事件：地缘冲突升级、监管黑天鹅、重大公司事故、
+emergencyEvents **只收录上述{market_label}快讯中真正的突发/异常事件**：地缘冲突升级、监管黑天鹅、重大公司事故、
 系统性风险信号、超预期政策转向等。常规业绩公告、例行数据发布、常规研报观点不算突发事件。
-最多 5 条；如果确实没有突发事件，返回空数组。
+最多 5 条；如果快讯中确实没有突发事件，返回空数组。不要添加快讯列表之外的事件。
 引用数字时只能使用上面行情快照里的数字。"""
     analysis_model = _llm_config()[3]
     return call_llm_json(ANALYSIS_SYSTEM, user_prompt, model=analysis_model)
@@ -504,7 +504,7 @@ def generate_strategy(analysis, quotes):
     user_prompt = f"""【指数行情快照】（唯一可引用的数字来源）
 {_quotes_digest(quotes)}
 
-【今日总结】
+【市场总结】
 {analysis.get('summary', '')}
 
 【宏观与资金面分析】
@@ -516,10 +516,10 @@ def generate_strategy(analysis, quotes):
 【突发事件及影响】
 {events_text}
 
-请基于以上内容输出 JSON：
+请基于以上内容（均为昨日数据）输出今日策略建议的 JSON：
 {{
-  "aShare": "今日A股策略建议，120-200字，方向性判断+值得关注的板块方向+需要观察的信号",
-  "hkShare": "今日港股策略建议，120-200字，同样是方向性判断",
+  "aShare": "A股策略建议，120-200字，基于昨日盘面情况给出今日方向性判断+值得关注的板块方向+需要观察的信号",
+  "hkShare": "港股策略建议，120-200字，基于昨日情况给出今日方向性判断",
   "risk": "风险提示，60-120字，只讲需要警惕的风险点，不要写免责声明（程序会自动附加）"
 }}"""
     analysis_model = _llm_config()[3]

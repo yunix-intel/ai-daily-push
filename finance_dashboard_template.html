@@ -150,11 +150,20 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     }
     sections.forEach((s,i)=>{html+='<section class="section" id="'+marketId+'-sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
       s.items.forEach(it=>{const orig=safeUrl(it.original||'#');const tp=safeUrl(it.translatedPage||'');
+        const hasTranslation = it.originalTitle && (it.originalTitle!==it.title||it.originalSummary!==it.summary);
         html+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
         html+='<h3><a href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
         html+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
-        if(it.originalTitle!==it.title||it.originalSummary!==it.summary) html+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+'</p>';
-        html+='<div class="foot"><span class="src">'+esc(it.source)+'</span><span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span></div></article>';});
+        if(hasTranslation) {
+          html+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+' <a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></p>';
+        }
+        html+='<div class="foot"><span class="src">'+esc(it.source)+'</span>';
+        if(!hasTranslation) {
+          html+='<span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span>';
+        } else if(tp&&tp!=='#') {
+          html+='<span class="linkgroup"><a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a></span>';
+        }
+        html+='</div></article>';});
       html+='</div></section>';});
     return html;
   }
