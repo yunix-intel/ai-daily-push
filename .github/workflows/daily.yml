@@ -40,7 +40,10 @@ jobs:
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
-
+          WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
+          WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
         run: python ai_daily_push.py
 
       # 第二条独立于第一条：财经日报失败（数据源/LLM 异常）不应该让已经成功的

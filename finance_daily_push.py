@@ -39,6 +39,17 @@ from ai_daily_push import (
     translate_text,
     truncate_bytes,
 )
+from trading_calendar import (
+    get_trading_status,
+    format_date_cn,
+    is_trading_day,
+    get_last_trading_day,
+)
+from news_classifier import (
+    classify_news_region_batch,
+    score_news_importance_batch,
+    identify_breaking_news,
+)
 
 # Windows 下重定向 stdout 默认走 GBK，日志里的 emoji（⚠️）会抛 UnicodeEncodeError
 # 把整个流程带崩——日志细节绝不该杀掉任务。这里统一把标准流切成 UTF-8 且遇到
@@ -498,10 +509,85 @@ STRATEGY_SYSTEM = (
 )
 
 
-def generate_strategy(analysis, quotes):
+def generate_strategy(analysis, quotes, trading_status=None):
+    """
+    生成策略建议
+
+    根据交易日状态生成不同内容：
+    - 常规交易日：今日策略建议
+    - 非交易日：休市提示
+    - 节后首日：假期影响分析与策略
+    """
+    if trading_status is None:
+        # 默认使用当前日期判断
+        import datetime
+        trading_status = get_trading_status(datetime.date.today(), market='A')
+
+    market_status = trading_status['market_status']
+    last_trading_day = trading_status['last_trading_day']
+    is_post_holiday = trading_status['is_post_holiday']
+
+    # 准备突发事件文本
     events = analysis.get("emergencyEvents") or []
     events_text = "\n".join(f"- {e.get('title','')}：{e.get('impact','')}" for e in events) or "（无突发事件）"
-    user_prompt = f"""【指数行情快照】（唯一可引用的数字来源）
+
+    # 根据市场状态生成不同的策略
+    if market_status in ('weekend', 'holiday'):
+        # 非交易日：显示休市提示
+        return {
+            "aShare": f"今日休市（{format_date_cn(last_trading_day)}收盘数据）。下一交易日请关注市场动向。",
+            "hkShare": f"今日休市（{format_date_cn(last_trading_day)}收盘数据）。下一交易日请关注市场动向。",
+            "risk": "休市期间请关注国际市场动态和突发事件。" + DISCLAIMER,
+            "is_trading_day": False,
+            "last_trading_day": format_date_cn(last_trading_day)
+        }
+
+    elif is_post_holiday:
+        # 节后首日：生成假期影响分析与策略
+        days_off = trading_status['days_since_last_trading']
+
+        user_prompt = f"""【指数行情快照】（截至上一交易日 {format_date_cn(last_trading_day)}）
+{_quotes_digest(quotes)}
+
+【市场总结】（上一交易日数据）
+{analysis.get('summary', '')}
+
+【宏观与资金面分析】
+{analysis.get('macro', '')}
+
+【板块与行业分析】
+{analysis.get('sector', '')}
+
+【突发事件及影响】
+{events_text}
+
+注意：今日是节后首个交易日（连续休市 {days_off} 天，上一交易日为 {format_date_cn(last_trading_day)}）。
+
+请基于以上内容输出今日策略建议的 JSON：
+{{
+  "holiday_summary": "假期期间要闻回顾（80-150字），总结休市期间的重要事件和市场变化",
+  "aShare": "A股今日策略（150-250字），结合假期期间的外围市场变化和上一交易日情况，给出今日开盘预判、关注方向和操作建议",
+  "hkShare": "港股今日策略（150-250字），结合假期期间情况给出今日方向性判断",
+  "risk": "风险提示（60-120字），只讲需要警惕的风险点，特别是假期期间的外围风险"
+}}"""
+
+        analysis_model = _llm_config()[3]
+        strategy = call_llm_json(STRATEGY_SYSTEM, user_prompt, model=analysis_model)
+
+        # 确保免责声明
+        risk = (strategy.get("risk") or "").strip()
+        if DISCLAIMER not in risk:
+            strategy["risk"] = (risk + " " if risk else "") + DISCLAIMER
+
+        strategy["is_trading_day"] = True
+        strategy["is_post_holiday"] = True
+        strategy["last_trading_day"] = format_date_cn(last_trading_day)
+
+        return strategy
+
+    else:
+        # 常规交易日：正常的策略建议
+        user_prompt = f"""【指数行情快照】（截至上一交易日 {format_date_cn(last_trading_day)}）
 {_quotes_digest(quotes)}
 
 【市场总结】
@@ -516,19 +602,26 @@ def generate_strategy(analysis, quotes):
 【突发事件及影响】
 {events_text}
 
-请基于以上内容（均为昨日数据）输出今日策略建议的 JSON：
+请基于以上内容（均为上一交易日数据）输出今日策略建议的 JSON：
 {{
-  "aShare": "A股策略建议，120-200字，基于昨日盘面情况给出今日方向性判断+值得关注的板块方向+需要观察的信号",
-  "hkShare": "港股策略建议，120-200字，基于昨日情况给出今日方向性判断",
+  "aShare": "A股策略建议，120-200字，基于上一交易日盘面情况给出今日方向性判断+值得关注的板块方向+需要观察的信号",
+  "hkShare": "港股策略建议，120-200字，基于上一交易日情况给出今日方向性判断",
   "risk": "风险提示，60-120字，只讲需要警惕的风险点，不要写免责声明（程序会自动附加）"
 }}"""
-    analysis_model = _llm_config()[3]
-    strategy = call_llm_json(STRATEGY_SYSTEM, user_prompt, model=analysis_model)
-    # 免责声明由代码兜底拼接，不依赖模型：实测模型会把这句话漏字（"自动成"），
-    # 而这是投资类内容必须准确出现的措辞，不能交给模型自由发挥。
-    risk = (strategy.get("risk") or "").strip()
-    if DISCLAIMER not in risk:
-        strategy["risk"] = (risk + " " if risk else "") + DISCLAIMER
+
+        analysis_model = _llm_config()[3]
+        strategy = call_llm_json(STRATEGY_SYSTEM, user_prompt, model=analysis_model)
+
+        # 确保免责声明
+        risk = (strategy.get("risk") or "").strip()
+        if DISCLAIMER not in risk:
+            strategy["risk"] = (risk + " " if risk else "") + DISCLAIMER
+
+        strategy["is_trading_day"] = True
+        strategy["is_post_holiday"] = False
+        strategy["last_trading_day"] = format_date_cn(last_trading_day)
+
+        return strategy
     return strategy
 
 
@@ -670,11 +763,27 @@ def build_finance_markdown(data, dashboard_url):
     # 策略建议（放在最前面，用户最关心）
     sg = data.get("strategy") or {}
     if sg.get("aShare") or sg.get("hkShare"):
-        lines.append("\n## 🎯 今日策略建议")
-        if sg.get("aShare"):
-            lines.append(f"> **A 股**：{sg['aShare']}")
-        if sg.get("hkShare"):
-            lines.append(f"> **港股**：{sg['hkShare']}")
+        # 根据是否为节后首日显示不同标题和内容
+        if sg.get("is_post_holiday"):
+            lines.append("\n## 🎯 今日策略建议")
+            # 节后首日：显示假期综述
+            if sg.get("holiday_summary"):
+                lines.append(f"\n**假期期间要闻回顾**\n> {sg['holiday_summary']}")
+            if sg.get("aShare"):
+                lines.append(f"\n**A 股**：{sg['aShare']}")
+            if sg.get("hkShare"):
+                lines.append(f"\n**港股**：{sg['hkShare']}")
+        elif sg.get("is_trading_day") == False:
+            # 非交易日：休市提示
+            lines.append("\n## 🎯 市场状态")
+            lines.append(f"> 今日休市（数据截至{sg.get('last_trading_day', '上一交易日')}）")
+        else:
+            # 常规交易日
+            lines.append("\n## 🎯 今日策略建议")
+            if sg.get("aShare"):
+                lines.append(f"> **A 股**：{sg['aShare']}")
+            if sg.get("hkShare"):
+                lines.append(f"> **港股**：{sg['hkShare']}")
 
     # 国内要闻
     domestic = data.get("domestic") or {}
@@ -801,17 +910,70 @@ def main():
 
     print(f"[2/5] 抓取财经快讯（过去 {args.hours} 小时）...")
     items_grouped = fetch_finance_items(hours=args.hours)
-    items_domestic = items_grouped["domestic"]
-    items_international = items_grouped["international"]
 
-    if not items_domestic and not items_international:
+    # 合并国内外新闻进行智能分类
+    all_items = items_grouped["domestic"] + items_grouped["international"]
+
+    if not all_items:
         print("     [!] 未抓到任何财经条目，终止本次财经日报（不影响 AI 日报）。")
         return
 
+    print(f"     [2.1] LLM 智能分类（区域+重要性）...")
+    try:
+        # 区域重新分类（解决格隆汇等来源的分类问题）
+        regions = classify_news_region_batch(all_items, call_llm_json)
+
+        # 重要性评分
+        scores = score_news_importance_batch(all_items, call_llm_json)
+
+        # 更新分类和评分
+        for i, item in enumerate(all_items):
+            item['region'] = regions[i] if i < len(regions) else 'domestic'
+            item['importance_score'] = scores[i] if i < len(scores) else 5
+
+        # 重新分组
+        items_domestic = [item for item in all_items if item.get('region') == 'domestic']
+        items_international = [item for item in all_items if item.get('region') == 'international']
+
+        print(f"     重新分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
+
+        # 按重要性排序
+        items_domestic.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
+        items_international.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
+
+    except Exception as exc:
+        print(f"     [!] 智能分类失败，使用原始分类：{exc}")
+        items_domestic = items_grouped["domestic"]
+        items_international = items_grouped["international"]
+        # 默认评分
+        for item in items_domestic + items_international:
+            item['importance_score'] = 5
+
     # 翻译国际新闻
     if items_international:
-        print("     [2.1] 翻译国际要闻 ...")
+        print("     [2.2] 翻译国际要闻 ...")
         translate_finance_items(items_international)
+
+    # 识别突发事件
+    print("     [2.3] 识别突发事件 ...")
+    try:
+        breaking_events_domestic = identify_breaking_news(items_domestic, call_llm_json) if items_domestic else []
+        breaking_events_international = identify_breaking_news(items_international, call_llm_json) if items_international else []
+        print(f"     突发事件：国内 {len(breaking_events_domestic)} 个，国际 {len(breaking_events_international)} 个")
+    except Exception as exc:
+        print(f"     [!] 突发事件识别失败：{exc}")
+        breaking_events_domestic = []
+        breaking_events_international = []
+
+    # 分层：核心必读（8-10分）、重要要闻（5-7分）
+    must_read_domestic = [item for item in items_domestic if item.get('importance_score', 0) >= 8]
+    important_domestic = [item for item in items_domestic if 5 <= item.get('importance_score', 0) < 8]
+
+    must_read_international = [item for item in items_international if item.get('importance_score', 0) >= 8]
+    important_international = [item for item in items_international if 5 <= item.get('importance_score', 0) < 8]
+
+    print(f"     国内：核心必读 {len(must_read_domestic)} 条，重要要闻 {len(important_domestic)} 条")
+    print(f"     国际：核心必读 {len(must_read_international)} 条，重要要闻 {len(important_international)} 条")
 
     # 分板块
     sections_domestic = classify_sections(items_domestic, SECTION_RULES_DOMESTIC) if items_domestic else []
@@ -849,6 +1011,17 @@ def main():
         print("     跳过国际分析（无国际新闻）")
 
     print("[4/5] LLM 生成 A股/港股策略建议 ...")
+
+    # 获取交易日状态
+    import datetime
+    today = datetime.date.today()
+    trading_status = get_trading_status(today, market='A')
+
+    print(f"     交易日状态：{trading_status['market_status']}")
+    print(f"     上一交易日：{format_date_cn(trading_status['last_trading_day'])}")
+    if trading_status['is_post_holiday']:
+        print(f"     节后首日：连续休市 {trading_status['days_since_last_trading']} 天")
+
     # 策略需要综合国内外分析
     if analysis_domestic_ok or analysis_international_ok:
         try:
@@ -859,7 +1032,7 @@ def main():
                 "sector": (analysis_domestic.get("sector", "") + "\n\n" + analysis_international.get("sector", "")).strip(),
                 "emergencyEvents": (analysis_domestic.get("emergencyEvents") or []) + (analysis_international.get("emergencyEvents") or []),
             }
-            strategy = generate_strategy(combined_analysis, quotes)
+            strategy = generate_strategy(combined_analysis, quotes, trading_status)
             print(f"     A股 {len(strategy.get('aShare',''))} 字，港股 {len(strategy.get('hkShare',''))} 字")
         except Exception as exc:
             strategy = dict(STRATEGY_FALLBACK)
