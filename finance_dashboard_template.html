@@ -138,7 +138,57 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     let html='<div class="market-divider'+(marketId==='intl'?' intl':'')+'" id="'+marketId+'-section"><h2>'+marketLabel+'<span class="badge">'+sections.reduce((s,sec)=>s+sec.items.length,0)+' 条</span></h2></div>';
     if(events.length){
       html+='<div class="block emergency"><h2>🚨 突发事件</h2><ol>';
-      events.forEach(e=>{html+='<li><div><div class="ev-t">'+esc(e.title)+'</div><div class="ev-d">'+esc(e.desc)+'</div>'+(e.impact?'<div class="ev-i">影响：'+esc(e.impact)+'</div>':'')+'</div></li>';});
+      events.forEach(e=>{
+        html+='<li><div><div class="ev-t">'+esc(e.title)+'</div><div class="ev-d">'+esc(e.desc)+'</div>';
+
+        // 影响分析展示
+        if(e.impact) {
+          const imp = e.impact;
+          html+='<div class="ev-i" style="margin-top:8px;padding:8px;background:var(--bg2);border-radius:4px">';
+
+          // 影响级别和方向
+          if(imp.impact_level || imp.impact_direction) {
+            html+='<div style="margin-bottom:4px">';
+            if(imp.impact_level) {
+              const levelColor = imp.impact_level==='重大'?'var(--warn)':(imp.impact_level==='中等'?'var(--accent)':'var(--muted)');
+              html+='<span style="color:'+levelColor+';font-weight:600">'+esc(imp.impact_level)+'</span>';
+            }
+            if(imp.impact_direction) {
+              const dirColor = imp.impact_direction==='利好'?'var(--up)':(imp.impact_direction==='利空'?'var(--down)':'var(--muted)');
+              html+=' <span style="color:'+dirColor+';font-weight:600">'+esc(imp.impact_direction)+'</span>';
+            }
+            if(imp.duration) {
+              html+=' <span style="color:var(--muted);font-size:12px">（'+esc(imp.duration)+'）</span>';
+            }
+            html+='</div>';
+          }
+
+          // 受益/受损行业
+          if(imp.beneficiary_sectors && imp.beneficiary_sectors.length > 0) {
+            html+='<div style="margin-top:6px;font-size:13px"><span style="color:var(--up)">▲ 受益：</span>'+imp.beneficiary_sectors.map(s=>esc(s)).join('、')+'</div>';
+          }
+          if(imp.damaged_sectors && imp.damaged_sectors.length > 0) {
+            html+='<div style="margin-top:4px;font-size:13px"><span style="color:var(--down)">▼ 受损：</span>'+imp.damaged_sectors.map(s=>esc(s)).join('、')+'</div>';
+          }
+
+          // 操作建议
+          if(imp.operation_advice) {
+            html+='<div style="margin-top:6px;font-size:13px;color:var(--accent2)">💡 '+esc(imp.operation_advice)+'</div>';
+          }
+
+          // 风险提示
+          if(imp.risk_warning) {
+            html+='<div style="margin-top:6px;font-size:12px;color:var(--warn)">⚠️ '+esc(imp.risk_warning)+'</div>';
+          }
+
+          html+='</div>';
+        } else if(e.impact) {
+          // 兼容旧格式（纯文本）
+          html+='<div class="ev-i">影响：'+esc(e.impact)+'</div>';
+        }
+
+        html+='</div></li>';
+      });
       html+='</ol></div>';
     }
     if(an.summary){html+='<div class="block"><h2>📝 市场总结</h2><p>'+esc(an.summary)+'</p></div>';}

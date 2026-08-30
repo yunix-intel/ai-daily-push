@@ -1059,6 +1059,31 @@ def main():
         breaking_events_domestic = identify_breaking_news(items_domestic, llm_wrapper) if items_domestic else []
         breaking_events_international = identify_breaking_news(items_international, llm_wrapper) if items_international else []
         print(f"     突发事件：国内 {len(breaking_events_domestic)} 个，国际 {len(breaking_events_international)} 个")
+
+        # 分析突发事件影响
+        if breaking_events_domestic or breaking_events_international:
+            print("     [2.5] 分析突发事件影响 ...")
+            try:
+                from event_impact_analyzer import EventImpactAnalyzer
+
+                # 创建 LLM 调用包装器
+                def impact_llm_caller(system_prompt, user_prompt, model=None):
+                    return call_llm_json(system_prompt, user_prompt, model=model)
+
+                analyzer = EventImpactAnalyzer(llm_caller=impact_llm_caller)
+
+                # 分析国内突发事件
+                if breaking_events_domestic:
+                    breaking_events_domestic = analyzer.analyze_events_batch(breaking_events_domestic)
+
+                # 分析国际突发事件
+                if breaking_events_international:
+                    breaking_events_international = analyzer.analyze_events_batch(breaking_events_international)
+
+                print(f"     影响分析完成")
+            except Exception as exc:
+                print(f"     [!] 影响分析失败，跳过：{exc}")
+
     except Exception as exc:
         print(f"     [!] 突发事件识别失败：{exc}")
         breaking_events_domestic = []
