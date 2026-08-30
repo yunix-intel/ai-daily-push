@@ -26,8 +26,27 @@ class TestScrapers(unittest.TestCase):
         # 描述字段验证
         self.assertIn('description', data)
 
+        # 增强字段验证（Phase A2）
+        self.assertIn('date', data)
+        self.assertIn('total_models', data)
+        self.assertIn('pricing', data)
+        self.assertIn('rankings', data)
+
+        # 验证数据质量
+        if data.get('total_models', 0) > 0:
+            self.assertGreater(data['total_models'], 0)
+
+        if len(data.get('pricing', [])) > 0:
+            pricing = data['pricing'][0]
+            self.assertIn('model', pricing)
+            self.assertIn('price_per_1m_tokens', pricing)
+            self.assertIn('context_length', pricing)
+
         print(f"[OK] OpenRouter data fetch test passed")
-        print(f"  - Detected {len(data.get('detected_models', []))} models")
+        print(f"  - Total models: {data.get('total_models', 0)}")
+        print(f"  - Pricing entries: {len(data.get('pricing', []))}")
+        print(f"  - Rankings entries: {len(data.get('rankings', []))}")
+        print(f"  - Detected models: {len(data.get('detected_models', []))}")
 
     def test_aa_fetch(self):
         """测试 Artificial Analysis 数据抓取"""
