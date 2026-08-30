@@ -878,14 +878,14 @@ def compose_markdown(body, tail, max_bytes):
     return truncate_bytes(body, budget) + "\n" + tail
 
 
-def push_wecom_news_card(webhook, dashboard_url):
+def push_wecom_news_card(webhook, dashboard_url, title_prefix="财经日报"):
     """企业微信群机器人：图文卡片（news 类型），点击打开财经日报网页。"""
     news = {
         "msgtype": "news",
         "news": {
             "articles": [{
-                "title": "💹 查看完整财经日报（网页版）",
-                "description": "财经日报 · 股指 · 突发事件 · 市场分析 · 策略建议 · 点击打开",
+                "title": f"{title_prefix} 💹 查看完整日报",
+                "description": f"{title_prefix} · 股指 · 突发事件 · 市场分析 · 策略建议 · 点击打开",
                 "url": dashboard_url,
                 "picurl": "https://picsum.photos/id/1067/600/400",  # 财经主题配图
             }]
@@ -1194,10 +1194,11 @@ def main():
 
     if webhook:
         print("[5/5] 推送财经日报到企业微信群机器人 ...")
+        title = f"财经日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         if dashboard_url:
             print("     使用图文卡片模式（news）")
             try:
-                resp = push_wecom_news_card(webhook, dashboard_url)
+                resp = push_wecom_news_card(webhook, dashboard_url, title_prefix=title)
                 print("     企业微信返回：", resp)
                 if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
                     print("     [!] 推送失败：", resp)

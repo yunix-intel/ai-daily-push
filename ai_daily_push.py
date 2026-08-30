@@ -835,7 +835,7 @@ def truncate_bytes(s, max_bytes):
         return _truncate_by_bytes(suffix.strip(), max_bytes)
     return _truncate_by_bytes(s, budget) + suffix
 
-def push_wecom_webhook(webhook, markdown, dashboard_url=None):
+def push_wecom_webhook(webhook, markdown, dashboard_url=None, title_prefix="AI 日报"):
     """企业微信群机器人 -> 个人微信。无需 access_token、无需 IP 白名单。
     只发一条：有 dashboard_url 时发 news 图文卡片（按钮卡片，点击打开完整仪表盘网页），
     否则退化为 markdown 摘要（没有网页链接可跳转，只能把要点直接发出来）。"""
@@ -844,8 +844,8 @@ def push_wecom_webhook(webhook, markdown, dashboard_url=None):
             "msgtype": "news",
             "news": {
                 "articles": [{
-                    "title": "📊 查看完整仪表盘（网页版）",
-                    "description": "AI 日报 · 全部版块 · 卡片式网页，点击打开",
+                    "title": f"{title_prefix} 📊 查看完整仪表盘",
+                    "description": f"{title_prefix} · 全部版块 · 卡片式网页，点击打开",
                     "url": dashboard_url,
                     "picurl": "https://picsum.photos/id/1015/600/400",
                 }]
@@ -1046,8 +1046,9 @@ def main():
 
     if webhook:
         print("[4/4] 推送到企业微信群机器人（-> 个人微信）...")
+        title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         try:
-            resp = push_wecom_webhook(webhook, md, dashboard_url)
+            resp = push_wecom_webhook(webhook, md, dashboard_url, title_prefix=title)
             print("     企业微信返回：", resp)
             failed = [r for r in resp if isinstance(r, dict) and r.get("errcode", 0) != 0]
             if failed:
