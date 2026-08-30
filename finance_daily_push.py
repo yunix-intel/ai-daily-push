@@ -280,102 +280,46 @@ def translate_finance_items(items):
 
 def pre_translate_articles(items_international):
     """
-    预翻译国际要闻全文
+    预翻译国际要闻全文（使用 ArticleTranslator）
 
     优先级：
-    1. 核心必读（importance_score >= 8）
-    2. 重要要闻前 5 条（5 <= importance_score < 8）
+    1. 核心必读（importance_score >= 7）
+    2. 最多翻译 5 篇
 
     过滤规则：
-    - 排除快讯链接（/live/, /flash/, /kuaixun/ 等）
+    - 排除快讯链接
     - 只翻译完整文章页面
 
     Args:
         items_international: 国际要闻列表
 
     Returns:
-        无返回值，直接修改 items 添加 translatedPage 字段
+        无返回值，直接修改 items 添加 translated_content 字段
     """
-    from article_extractor import extract_article
-    from translation_service import translate_article_llm
-    from static_page_generator import generate_translation_page
+    from article_translator import batch_translate_articles
 
-    # 快讯链接特征（不适合全文翻译）
-    QUICK_NEWS_PATTERNS = [
-        '/live/',       # 格隆汇快讯
-        '/flash/',      # 闪讯
-        '/kuaixun/',    # 快讯
-        '/bulletin/',   # 简报
-        '/brief/',      # 简讯
-    ]
-
-    def is_full_article(url):
-        """判断是否为完整文章页面（非快讯）"""
-        url_lower = url.lower()
-        return not any(pattern in url_lower for pattern in QUICK_NEWS_PATTERNS)
-
-    # 筛选需要翻译的文章
-    candidates = []
-
-    # 1. 核心必读
-    must_read = [item for item in items_international if item.get('importance_score', 0) >= 8]
-    candidates.extend(must_read)
-
-    # 2. 重要要闻前 5 条
-    important = [item for item in items_international if 5 <= item.get('importance_score', 0) < 8]
-    candidates.extend(important[:5])
-
-    # 3. 过滤快讯链接
-    candidates_filtered = [item for item in candidates if is_full_article(item.get('link', ''))]
-    skipped_count = len(candidates) - len(candidates_filtered)
-
-    if skipped_count > 0:
-        print(f"     过滤快讯链接：{skipped_count} 条")
-
-    if not candidates_filtered:
-        print("     无需翻译的核心文章（已过滤快讯）")
-        return
-
-    print(f"     准备翻译 {len(candidates_filtered)} 篇文章全文 ...")
-
-    success_count = 0
-    for item in candidates_filtered:
-        url = item.get('link', '')
-        if not url:
-            continue
-
+    # 创建 LLM 调用包装器
+    def llm_caller(system_prompt, user_prompt, model=None):
+        """LLM 调用包装器，返回纯文本"""
         try:
-            # 1. 提取原文
-            article = extract_article(url)
-            if not article:
-                print(f"     [!] 文章提取失败：{url[:60]}")
-                continue
-
-            # 2. LLM 翻译
-            translated_text = translate_article_llm(article['text'], call_llm_json)
-            if not translated_text or len(translated_text) < 100:
-                print(f"     [!] 翻译失败或过短：{url[:60]}")
-                continue
-
-            # 3. 生成静态页面
-            article_data = {
-                'title': item.get('title', ''),
-                'url': url,
-                'source': item.get('source', ''),
-                'author': article.get('author', ''),
-                'date': article.get('publish_date', '')
-            }
-            page_path = generate_translation_page(article_data, translated_text)
-
-            # 4. 更新 item
-            item['translatedPage'] = f"https://yunix-intel.github.io/ai-daily-push/{page_path}"
-            success_count += 1
-
+            # 使用翻译模型
+            translate_model = _llm_config()[2]
+            result = call_llm(system_prompt, user_prompt, model=model or translate_model)
+            return result
         except Exception as e:
-            print(f"     [!] 全文翻译失败：{str(e)[:60]}")
-            continue
+            print(f"     [WARN] LLM 调用失败: {e}")
+            return None
 
-    print(f"     全文翻译完成：{success_count}/{len(candidates_filtered)} 篇")
+    # 批量翻译文章
+    try:
+        translated_count = batch_translate_articles(
+            items_international,
+            llm_caller=llm_caller,
+            max_count=5
+        )
+        print(f"     全文翻译完成：{translated_count} 篇")
+    except Exception as e:
+        print(f"     [!] 全文翻译失败：{e}")
 
 
 # ----------------------------- 板块分类 -----------------------------

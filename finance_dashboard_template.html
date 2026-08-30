@@ -151,19 +151,41 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     sections.forEach((s,i)=>{html+='<section class="section" id="'+marketId+'-sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
       s.items.forEach(it=>{const orig=safeUrl(it.original||'#');const tp=safeUrl(it.translatedPage||'');
         const hasTranslation = it.originalTitle && (it.originalTitle!==it.title||it.originalSummary!==it.summary);
+        const hasFullTranslation = it.translated_content && it.translated_content.length > 0;
+        const itemId = 'item-'+marketId+'-'+it.idx;
+
         html+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
         html+='<h3><a href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
         html+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
+
         if(hasTranslation) {
           html+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+' <a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></p>';
         }
-        html+='<div class="foot"><span class="src">'+esc(it.source)+'</span>';
-        if(!hasTranslation) {
-          html+='<span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span>';
-        } else if(tp&&tp!=='#') {
-          html+='<span class="linkgroup"><a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a></span>';
+
+        // 翻译全文区域（可展开/折叠）
+        if(hasFullTranslation) {
+          html+='<div id="'+itemId+'-content" style="display:none;margin-top:12px;padding:12px;background:var(--bg2);border-radius:6px;max-height:400px;overflow-y:auto">';
+          html+='<div style="color:var(--muted);font-size:12px;margin-bottom:8px">中文全文翻译</div>';
+          html+='<div style="white-space:pre-wrap;line-height:1.8;font-size:14px">'+esc(it.translated_content)+'</div>';
+          html+='</div>';
         }
-        html+='</div></article>';});
+
+        html+='<div class="foot"><span class="src">'+esc(it.source)+'</span>';
+        html+='<span class="linkgroup">';
+
+        // 翻译全文按钮（展开/折叠）
+        if(hasFullTranslation) {
+          html+='<a class="orig" href="javascript:void(0)" onclick="toggleTranslation(\''+itemId+'-content\',this)">查看中文全文 ↓</a>';
+        } else if(tp&&tp!=='#') {
+          html+='<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>';
+        }
+
+        if(!hasTranslation) {
+          html+='<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a>';
+        }
+
+        html+='</span></div></article>';
+      });
       html+='</div></section>';});
     return html;
   }
@@ -257,5 +279,19 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   const sources='格隆汇、同花顺、金十数据、第一财经、财新网、Seeking Alpha、Bloomberg、CNBC';
   document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：'+sources+' · 行情：腾讯财经';
 })();
+
+// 展开/折叠翻译全文
+function toggleTranslation(contentId, linkElement) {
+  const content = document.getElementById(contentId);
+  if (content) {
+    if (content.style.display === 'none') {
+      content.style.display = 'block';
+      linkElement.textContent = '收起中文全文 ↑';
+    } else {
+      content.style.display = 'none';
+      linkElement.textContent = '查看中文全文 ↓';
+    }
+  }
+}
 </script>
 </body></html>
