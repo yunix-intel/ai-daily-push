@@ -1,0 +1,55 @@
+{
+  "timestamp": "2026-08-30 08:40:42",
+  "tests": [
+    {
+      "name": "新闻数据提取",
+      "status": "PASS",
+      "details": {
+        "arr_count": 1,
+        "funding_count": 1,
+        "users_count": 1,
+        "price_count": 1
+      }
+    },
+    {
+      "name": "OpenRouter 爬虫",
+      "status": "PASS",
+      "details": {
+        "models_count": 0,
+        "has_description": true,
+        "detected_models": [
+          "Gemini",
+          "Flash",
+          "Pro"
+        ]
+      }
+    },
+    {
+      "name": "Artificial Analysis 爬虫",
+      "status": "PASS",
+      "details": {
+        "intelligence_count": 5,
+        "speed_count": 0,
+        "cost_count": 0
+      }
+    },
+    {
+      "name": "数据整合",
+      "status": "PASS",
+      "details": {
+        "total_insights": 6,
+        "official_count": 3,
+        "usage_count": 0,
+        "benchmark_count": 3
+      }
+    },
+    {
+      "name": "板块生成",
+      "status": "PASS",
+      "details": {
+        "label": "📊 行业数据洞察",
+        "items_count": 6
+      }
+    }
+  ]
+}

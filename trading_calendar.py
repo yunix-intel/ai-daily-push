@@ -2,9 +2,223 @@
 """
 交易日历模块
 支持 A股和港股的交易日判断
+
+节假日数据会自动从在线 API 获取并缓存
+缓存失效或获取失败时，回退到本地预设数据
 """
 import datetime
-from typing import Optional, Literal
+import json
+import os
+import urllib.request
+from typing import Optional, Literal, List
+
+# 缓存目录
+CACHE_DIR = os.path.join(os.path.dirname(__file__), '.cache')
+CACHE_FILE = os.path.join(CACHE_DIR, 'trading_calendar_cache.json')
+CACHE_EXPIRY_DAYS = 30  # 缓存30天
+
+
+def _ensure_cache_dir():
+    """确保缓存目录存在"""
+    if not os.path.exists(CACHE_DIR):
+        os.makedirs(CACHE_DIR)
+
+
+def _load_cache() -> dict:
+    """加载缓存的交易日历数据"""
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                cache = json.load(f)
+
+            # 检查缓存是否过期
+            cache_time = datetime.datetime.fromisoformat(cache.get('update_time', '2000-01-01'))
+            if datetime.datetime.now() - cache_time < datetime.timedelta(days=CACHE_EXPIRY_DAYS):
+                return cache
+    except Exception:
+        pass
+    return {}
+
+
+def _save_cache(cache: dict):
+    """保存交易日历数据到缓存"""
+    try:
+        _ensure_cache_dir()
+        cache['update_time'] = datetime.datetime.now().isoformat()
+        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _fetch_official_holidays_from_github(year: int) -> List[datetime.date]:
+    """
+    从 GitHub holiday-cn 获取官方节假日数据
+
+    数据来源：https://github.com/NateScarlet/holiday-cn
+    这是根据国务院办公厅每年发布的节假日安排整理的开源数据
+    """
+    try:
+        url = f"https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json"
+
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode('utf-8'))
+
+        holidays = []
+        for item in data.get('days', []):
+            # 只获取非工作日（isOffDay = true）
+            if item.get('isOffDay'):
+                date_str = item.get('date')
+                if date_str:
+                    date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+                    # 只保留工作日的节假日（排除普通周末）
+                    if date_obj.weekday() < 5:
+                        holidays.append(date_obj)
+
+        return sorted(holidays)
+
+    except Exception as e:
+        return []
+
+
+def _fetch_online_holidays(year: int, market: str = 'A') -> tuple[List[datetime.date], Optional[datetime.date]]:
+    """
+    从在线数据源获取交易日历数据
+
+    数据源优先级：
+    1. GitHub holiday-cn（官方数据，最可靠）
+    2. 东方财富网 API（实时数据，用于验证）
+
+    Returns:
+        (节假日列表, API数据的最后日期)
+    """
+    if market != 'A':
+        # 港股暂时使用原有逻辑
+        return [], None
+
+    # 优先使用 GitHub holiday-cn（官方数据）
+    github_holidays = _fetch_official_holidays_from_github(year)
+
+    if github_holidays:
+        # 成功获取官方数据，返回完整年份的数据
+        return github_holidays, datetime.date(year, 12, 31)
+
+    # 降级：使用东方财富网 API
+    try:
+        if market == 'A':
+            # 使用东方财富网交易日历 API
+            url = f"http://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.000001&fields1=f1,f2,f3,f4,f5&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=0&beg={year}0101&end={year}1231"
+
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+
+            if data and 'data' in data and 'klines' in data['data']:
+                trading_days = set()
+                last_trading_date = None
+
+                for kline in data['data']['klines']:
+                    date_str = kline.split(',')[0]  # YYYY-MM-DD
+                    date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+                    trading_days.add(date_obj)
+
+                    # 记录最后一个交易日
+                    if last_trading_date is None or date_obj > last_trading_date:
+                        last_trading_date = date_obj
+
+                # 计算节假日：工作日（周一到周五）且不在交易日列表中的日期
+                # 只计算到 API 数据覆盖的日期范围
+                holidays = []
+                start = datetime.date(year, 1, 1)
+                # 只统计到 API 数据的最后日期，避免误判未来的交易日
+                end = last_trading_date if last_trading_date else datetime.date(year, 12, 31)
+                current = start
+
+                while current <= end:
+                    # 是工作日（不是周末），但不是交易日 = 节假日
+                    if current.weekday() < 5 and current not in trading_days:
+                        holidays.append(current)
+                    current += datetime.timedelta(days=1)
+
+                return holidays, last_trading_date
+    except Exception as e:
+        print(f"  [WARN] 在线获取交易日历失败: {e}")
+
+    return [], None
+
+
+def _get_holidays_for_year(year: int, market: Literal['A', 'HK'] = 'A') -> List[datetime.date]:
+    """
+    获取指定年份的节假日列表（自动缓存）
+
+    优先级：
+    1. 缓存数据（30天内有效）
+    2. 在线 API 获取 + 本地预设数据补充
+    3. 纯本地预设数据（2026年）
+    """
+    # 尝试从缓存加载
+    cache = _load_cache()
+    cache_key = f"{market}_{year}"
+
+    if cache_key in cache:
+        try:
+            return [datetime.datetime.strptime(d, '%Y-%m-%d').date() for d in cache[cache_key]]
+        except Exception:
+            pass
+
+    # 尝试在线获取
+    online_holidays, last_date = _fetch_online_holidays(year, market)
+
+    # 获取本地预设数据
+    local_holidays = []
+    if year == 2026:
+        if market == 'A':
+            local_holidays = A_STOCK_HOLIDAYS_2026
+        else:
+            local_holidays = HK_STOCK_HOLIDAYS_2026
+
+    if online_holidays and last_date:
+        # 合并策略：
+        # - API 数据覆盖范围内：使用 API 数据
+        # - API 数据之后：使用本地预设数据
+        merged_holidays = set(online_holidays)
+
+        # 添加 API 数据之后的本地预设节假日
+        for holiday in local_holidays:
+            if holiday > last_date:
+                merged_holidays.add(holiday)
+
+        final_holidays = sorted(merged_holidays)
+
+        # 保存到缓存
+        cache[cache_key] = [d.isoformat() for d in final_holidays]
+        cache[f"{cache_key}_last_date"] = last_date.isoformat()
+        _save_cache(cache)
+
+        return final_holidays
+
+    # 回退到纯本地预设数据
+    if local_holidays:
+        return local_holidays
+
+    # 如果没有数据，返回空列表（只依赖周末判断）
+    return []
+
+
+def _get_last_api_date(year: int, market: Literal['A', 'HK'] = 'A') -> Optional[datetime.date]:
+    """获取 API 数据的最后日期（从缓存读取）"""
+    cache = _load_cache()
+    cache_key = f"{market}_{year}_last_date"
+
+    if cache_key in cache:
+        try:
+            return datetime.datetime.strptime(cache[cache_key], '%Y-%m-%d').date()
+        except Exception:
+            pass
+
+    return None
+
 
 # A股休市日（2026年，需要每年更新）
 # 数据来源：上交所/深交所公告
@@ -89,7 +303,7 @@ def is_weekend(date: datetime.date) -> bool:
 
 def is_trading_day(date: datetime.date, market: Literal['A', 'HK'] = 'A') -> bool:
     """
-    判断是否为交易日
+    判断是否为交易日（自动从在线 API 获取最新数据）
 
     Args:
         date: 日期
@@ -103,8 +317,11 @@ def is_trading_day(date: datetime.date, market: Literal['A', 'HK'] = 'A') -> boo
     if is_weekend(date):
         return False
 
+    # 获取该年份的节假日列表（自动缓存）
+    year = date.year
+    holidays = _get_holidays_for_year(year, market)
+
     # 检查是否为节假日
-    holidays = A_STOCK_HOLIDAYS_2026 if market == 'A' else HK_STOCK_HOLIDAYS_2026
     if date in holidays:
         return False
 

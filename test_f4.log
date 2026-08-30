@@ -1,0 +1,72 @@
+Building prefix dict from C:\Users\yunix\AppData\Local\Programs\Python\Python314\Lib\site-packages\jieba\dict.txt ...
+Dumping model to file cache C:\Users\yunix\AppData\Local\Temp\jieba.cache
+Loading model cost 6.6593708992004395 seconds.
+Prefix dict has been built succesfully.
+[1/5] 抓取指数行情 ...
+     上证指数：3952.18（-0.11%）
+     深证成指：13953.07（-0.68%）
+     创业板指：3424.4（-1.41%）
+     恒生指数：25584.79（+0.07%）
+     恒生科技指数：4605.15（-0.33%）
+[2/5] 抓取财经快讯（过去 24 小时）...
+     格隆汇快讯：抓取 15 条，入库 15 条
+     [!] 同花顺快讯 主镜像失败，已从备用镜像 #2 成功抓取
+     同花顺快讯：抓取 20 条，入库 19 条
+     金十数据：抓取 4 条，入库 2 条
+     第一财经：抓取 20 条，入库 20 条
+     财新网：抓取 17 条，入库 16 条
+     Seeking Alpha：抓取 7 条，入库 7 条
+     Bloomberg Markets：抓取 20 条，入库 20 条
+     CNBC Finance：抓取 20 条，入库 0 条
+     超出 24 小时窗口丢弃：21 条
+     合计入库：国内 72 条 + 国际 27 条 = 99 条
+     [2.1] LLM 智能分类（区域+重要性）...
+     [!] LLM 批量分类失败，使用关键词回退：未配置 OPENAI_API_KEY
+     [!] LLM 批量评分失败，使用默认分数：未配置 OPENAI_API_KEY
+     重新分类：国内 36 条，国际 63 条
+     [2.2] 翻译国际要闻标题摘要 ...
+     检测到 27 条英文新闻，准备批量翻译 ...
+     批次 1/3 失败（该批保留英文）：RuntimeError('未配置 OPENAI_API_KEY')
+     批次 2/3 失败（该批保留英文）：RuntimeError('未配置 OPENAI_API_KEY')
+     批次 3/3 失败（该批保留英文）：RuntimeError('未配置 OPENAI_API_KEY')
+     LLM 翻译未产出结果，保留英文原文
+     [2.3] 预翻译核心文章全文 ...
+     准备翻译 5 篇文章全文 ...
+     newspaper3k 提取失败，尝试 readability：正文过短，可能提取失败
+     readability 提取失败：正文过短
+     BeautifulSoup 提取失败：正文过短
+     [!] 文章提取失败：https://www.gelonghui.com/live/2640731
+     newspaper3k 提取失败，尝试 readability：正文过短，可能提取失败
+     批次翻译失败：未配置 OPENAI_API_KEY
+     翻译页面已缓存：f32a7200b488.html
+     newspaper3k 提取失败，尝试 readability：正文过短，可能提取失败
+     readability 提取失败：正文过短
+     BeautifulSoup 提取失败：正文过短
+     [!] 文章提取失败：https://www.gelonghui.com/live/2640724
+     批次翻译失败：未配置 OPENAI_API_KEY
+     翻译页面已缓存：d91ffcaecd1f.html
+     批次翻译失败：未配置 OPENAI_API_KEY
+     翻译页面已缓存：22b90566cfaf.html
+     全文翻译完成：3/5 篇
+     [2.4] 识别突发事件 ...
+     [!] 突发事件识别失败：未配置 OPENAI_API_KEY
+     [!] 突发事件识别失败：未配置 OPENAI_API_KEY
+     突发事件：国内 3 个，国际 3 个
+     国内：核心必读 0 条，重要要闻 36 条
+     国际：核心必读 0 条，重要要闻 63 条
+     国内板块：[('宏观与政策', 2), ('公司与行业', 1), ('其他财经资讯', 33)]
+     国际板块：[('全球宏观', 7), ('大宗商品', 3), ('公司与行业', 1), ('其他财经资讯', 52)]
+[3/5] LLM 生成市场分析（国内 + 国际）...
+     [!] 国内分析生成失败：RuntimeError('未配置 OPENAI_API_KEY')
+     [!] 国际分析生成失败：RuntimeError('未配置 OPENAI_API_KEY')
+[4/5] LLM 生成 A股/港股策略建议 ...
+     交易日状态：weekend
+     上一交易日：2026年08月28日
+     跳过：上一步分析未生成
+     已写入 D:\c\ai-daily-push\finance_dashboard.html
+     Markdown 正文 574 字节 + 保留尾部 258 字节 -> 实际发送 833 字节
+[5/5] --no-push：跳过推送。
+—— 图文卡片模式预览 ——
+标题: 💹 查看完整财经日报（网页版）
+描述: 财经日报 · 股指 · 突发事件 · 市场分析 · 策略建议 · 点击打开
+链接: https://yunix-intel.github.io/ai-daily-push/finance.html

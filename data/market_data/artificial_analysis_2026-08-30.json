@@ -1,0 +1,45 @@
+{
+  "source": "artificial_analysis",
+  "date": "2026-08-30",
+  "intelligence": [
+    {
+      "model": "Qwen",
+      "score": 3
+    },
+    {
+      "model": "DeepSeek",
+      "score": 4
+    },
+    {
+      "model": "Qwen",
+      "score": 3
+    },
+    {
+      "model": "Qwen",
+      "score": 3
+    },
+    {
+      "model": "Qwen",
+      "score": 3
+    },
+    {
+      "model": "DeepSeek",
+      "score": 4
+    },
+    {
+      "model": "DeepSeek",
+      "score": 4
+    },
+    {
+      "model": "DeepSeek",
+      "score": 29
+    },
+    {
+      "model": "Llama",
+      "score": 29
+    }
+  ],
+  "speed": [],
+  "cost": [],
+  "highlights_found": true
+}

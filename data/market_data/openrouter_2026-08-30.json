@@ -1,0 +1,550 @@
+{
+  "source": "openrouter",
+  "date": "2026-08-30",
+  "total_models": 396,
+  "description": "LLM rankings and AI leaderboard by real-world usage, ranked by tokens processed through the OpenRouter API. See which AI models developers actually use.",
+  "detected_models": [
+    "Gemini",
+    "Flash",
+    "Pro"
+  ],
+  "pricing": [
+    {
+      "model": "Tencent: Hy4 preview",
+      "id": "tencent/hy4-preview",
+      "price_per_1m_tokens": 1.6675,
+      "context_length": 1048576,
+      "created": 1787897375
+    },
+    {
+      "model": "Ling 3.0 Flash Fin (free)",
+      "id": "inclusionai/ling-3.0-flash-fin:free",
+      "price_per_1m_tokens": 0.0,
+      "context_length": 262144,
+      "created": 1787846290
+    },
+    {
+      "model": "Qwen: Qwen3.8 Flash",
+      "id": "qwen/qwen3.8-flash",
+      "price_per_1m_tokens": 0.31,
+      "context_length": 1000000,
+      "created": 1787773060
+    },
+    {
+      "model": "Z.ai: GLM 5.3 Flash",
+      "id": "z-ai/glm-5.3-flash",
+      "price_per_1m_tokens": 0.1625,
+      "context_length": 1310720,
+      "created": 1787752741
+    },
+    {
+      "model": "Z.ai: GLM 5.3 Flash (batch)",
+      "id": "z-ai/glm-5.3-flash:batch",
+      "price_per_1m_tokens": 0.325,
+      "context_length": 1048575,
+      "created": 1787752741
+    },
+    {
+      "model": "Meta: Muse Spark 1.2 Contributor",
+      "id": "meta/muse-spark-1.2-contributor",
+      "price_per_1m_tokens": 0.15,
+      "context_length": 1048576,
+      "created": 1787336476
+    },
+    {
+      "model": "DeepSeek: DeepSeek V4 Flash Vision Exp",
+      "id": "deepseek/deepseek-v4-flash-vision-exp",
+      "price_per_1m_tokens": 0.44,
+      "context_length": 1048576,
+      "created": 1787311563
+    },
+    {
+      "model": "Tencent: Hy-MT2-1.8B",
+      "id": "tencent/hy-mt2-1.8b",
+      "price_per_1m_tokens": 0.1105,
+      "context_length": 8192,
+      "created": 1787231581
+    },
+    {
+      "model": "Tencent: Hy-MT2-30B-A3B",
+      "id": "tencent/hy-mt2-30b-a3b",
+      "price_per_1m_tokens": 0.1845,
+      "context_length": 8192,
+      "created": 1787231561
+    },
+    {
+      "model": "Z.ai: GLM Latest",
+      "id": "~z-ai/glm-latest",
+      "price_per_1m_tokens": 2.6837,
+      "context_length": 1310720,
+      "created": 1787151053
+    },
+    {
+      "model": "Tencent: Hy-MT2-7B",
+      "id": "tencent/hy-mt2-7b",
+      "price_per_1m_tokens": 0.1845,
+      "context_length": 8192,
+      "created": 1787148797
+    },
+    {
+      "model": "Z.ai: GLM 5.3",
+      "id": "z-ai/glm-5.3",
+      "price_per_1m_tokens": 2.9,
+      "context_length": 1310720,
+      "created": 1787086655
+    },
+    {
+      "model": "Qwen: Qwen3.8 27B",
+      "id": "qwen/qwen3.8-27b",
+      "price_per_1m_tokens": 1.4875,
+      "context_length": 1000000,
+      "created": 1786722910
+    },
+    {
+      "model": "Dots Studio: Dots3-Note Preview (free)",
+      "id": "dots-studio/dots-3-note-preview:free",
+      "price_per_1m_tokens": 0.0,
+      "context_length": 512000,
+      "created": 1786680361
+    },
+    {
+      "model": "Google: Gemini 3.7 Flash",
+      "id": "google/gemini-3.7-flash",
+      "price_per_1m_tokens": 2.25,
+      "context_length": 1048576,
+      "created": 1786640581
+    },
+    {
+      "model": "Google: Gemini 3.7 Flash (batch)",
+      "id": "google/gemini-3.7-flash:batch",
+      "price_per_1m_tokens": 0.5625,
+      "context_length": 1048576,
+      "created": 1786640581
+    },
+    {
+      "model": "ByteDance Seed: Seed 2.1 Turbo",
+      "id": "bytedance-seed/seed-2-1-turbo",
+      "price_per_1m_tokens": 1.5,
+      "context_length": 262144,
+      "created": 1786552176
+    },
+    {
+      "model": "Qwen: Qwen3.8 2.4T A95B",
+      "id": "qwen/qwen3.8-2.4t-a95b",
+      "price_per_1m_tokens": 4.0,
+      "context_length": 1048576,
+      "created": 1786551702
+    },
+    {
+      "model": "Qwen: Qwen3.8 2.4T A95B (batch)",
+      "id": "qwen/qwen3.8-2.4t-a95b:batch",
+      "price_per_1m_tokens": 4.375,
+      "context_length": 1010000,
+      "created": 1786551702
+    },
+    {
+      "model": "ByteDance Seed: Seed-2.0-Code",
+      "id": "bytedance-seed/seed-2.0-code",
+      "price_per_1m_tokens": 1.75,
+      "context_length": 262144,
+      "created": 1786550701
+    },
+    {
+      "model": "DeepSeek: DeepSeek V4 Pro 0813",
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "price_per_1m_tokens": 1.32,
+      "context_length": 1048576,
+      "created": 1786549364
+    },
+    {
+      "model": "DeepSeek: DeepSeek V4 Pro 0813 (batch)",
+      "id": "deepseek/deepseek-v4-pro-0813:batch",
+      "price_per_1m_tokens": 2.64,
+      "context_length": 1048576,
+      "created": 1786549364
+    },
+    {
+      "model": "SpaceXAI: Grok 4.6",
+      "id": "x-ai/grok-4.6",
+      "price_per_1m_tokens": 4.0,
+      "context_length": 500000,
+      "created": 1786548957
+    },
+    {
+      "model": "LiquidAI: LFM2.5-2.6B (free)",
+      "id": "liquid/lfm-2.5-2.6b:free",
+      "price_per_1m_tokens": 0.0,
+      "context_length": 65536,
+      "created": 1786470519
+    },
+    {
+      "model": "NVIDIA: Nemotron 3.5 Lightning",
+      "id": "nvidia/nemotron-3.5-lightning",
+      "price_per_1m_tokens": 0.14,
+      "context_length": 262144,
+      "created": 1786452751
+    },
+    {
+      "model": "NVIDIA: Nemotron 3.5 Lightning (free)",
+      "id": "nvidia/nemotron-3.5-lightning:free",
+      "price_per_1m_tokens": 0.0,
+      "context_length": 1000000,
+      "created": 1786452751
+    },
+    {
+      "model": "Sakana: Sakana Namazu",
+      "id": "sakana/sakana-namazu",
+      "price_per_1m_tokens": 2.475,
+      "context_length": 262144,
+      "created": 1786410129
+    },
+    {
+      "model": "Upstage: Solar Pro 4",
+      "id": "upstage/solar-pro4",
+      "price_per_1m_tokens": 0.075,
+      "context_length": 524288,
+      "created": 1786371636
+    },
+    {
+      "model": "Meta: Muse Glimmer 30B",
+      "id": "meta/muse-glimmer-30b",
+      "price_per_1m_tokens": 0.75,
+      "context_length": 131072,
+      "created": 1786302394
+    },
+    {
+      "model": "Meta: Muse Glimmer 30B (batch)",
+      "id": "meta/muse-glimmer-30b:batch",
+      "price_per_1m_tokens": 0.925,
+      "context_length": 131072,
+      "created": 1786302394
+    },
+    {
+      "model": "Meta: Muse Spark 1.2",
+      "id": "meta/muse-spark-1.2",
+      "price_per_1m_tokens": 2.75,
+      "context_length": 1048576,
+      "created": 1785959287
+    },
+    {
+      "model": "Qwen: Qwen3.8 Max",
+      "id": "qwen/qwen3.8-max",
+      "price_per_1m_tokens": 4.0,
+      "context_length": 1000000,
+      "created": 1785731612
+    },
+    {
+      "model": "DeepSeek V4 Flash Latest",
+      "id": "~deepseek/deepseek-v4-flash-latest",
+      "price_per_1m_tokens": 0.095,
+      "context_length": 1310720,
+      "created": 1785606009
+    },
+    {
+      "model": "DeepSeek: DeepSeek V4 Flash 0731",
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "price_per_1m_tokens": 0.1225,
+      "context_length": 1310720,
+      "created": 1785478908
+    },
+    {
+      "model": "DeepSeek: DeepSeek V4 Flash 0731 (batch)",
+      "id": "deepseek/deepseek-v4-flash-0731:batch",
+      "price_per_1m_tokens": 0.21,
+      "context_length": 1048576,
+      "created": 1785478908
+    },
+    {
+      "model": "Thinking Machines: Inkling Small",
+      "id": "thinkingmachines/inkling-small",
+      "price_per_1m_tokens": 0.825,
+      "context_length": 1048576,
+      "created": 1785443117
+    },
+    {
+      "model": "Thinking Machines: Inkling Small (batch)",
+      "id": "thinkingmachines/inkling-small:batch",
+      "price_per_1m_tokens": 0.85,
+      "context_length": 524288,
+      "created": 1785443117
+    },
+    {
+      "model": "Thinking Machines: Inkling Small (free)",
+      "id": "thinkingmachines/inkling-small:free",
+      "price_per_1m_tokens": 0.0,
+      "context_length": 1048576,
+      "created": 1785443117
+    },
+    {
+      "model": "Qwen: Qwen3.7 Flash",
+      "id": "qwen/qwen3.7-flash",
+      "price_per_1m_tokens": 0.08,
+      "context_length": 1000000,
+      "created": 1785190561
+    },
+    {
+      "model": "Claude Opus 5 (Fast)",
+      "id": "anthropic/claude-opus-5-fast",
+      "price_per_1m_tokens": 30.0,
+      "context_length": 1000000,
+      "created": 1784912546
+    },
+    {
+      "model": "Claude Opus 5",
+      "id": "anthropic/claude-opus-5",
+      "price_per_1m_tokens": 15.0,
+      "context_length": 1000000,
+      "created": 1784912544
+    },
+    {
+      "model": "Claude Opus 5 (batch)",
+      "id": "anthropic/claude-opus-5:batch",
+      "price_per_1m_tokens": 7.5,
+      "context_length": 1000000,
+      "created": 1784912544
+    },
+    {
+      "model": "Ling-3.0-flash",
+      "id": "inclusionai/ling-3.0-flash",
+      "price_per_1m_tokens": 0.042,
+      "context_length": 262144,
+      "created": 1784818580
+    },
+    {
+      "model": "Poolside: Laguna S 2.1",
+      "id": "poolside/laguna-s-2.1",
+      "price_per_1m_tokens": 0.135,
+      "context_length": 1048576,
+      "created": 1784652683
+    },
+    {
+      "model": "Poolside: Laguna S 2.1 (free)",
+      "id": "poolside/laguna-s-2.1:free",
+      "price_per_1m_tokens": 0.0,
+      "context_length": 262144,
+      "created": 1784652683
+    },
+    {
+      "model": "Google: Gemini 3.6 Flash",
+      "id": "google/gemini-3.6-flash",
+      "price_per_1m_tokens": 2.25,
+      "context_length": 1048576,
+      "created": 1784646733
+    },
+    {
+      "model": "Google: Gemini 3.6 Flash (batch)",
+      "id": "google/gemini-3.6-flash:batch",
+      "price_per_1m_tokens": 1.125,
+      "context_length": 1048576,
+      "created": 1784646733
+    },
+    {
+      "model": "Google: Gemini 3.5 Flash Lite",
+      "id": "google/gemini-3.5-flash-lite",
+      "price_per_1m_tokens": 1.4,
+      "context_length": 1048576,
+      "created": 1784646726
+    },
+    {
+      "model": "Google: Gemini 3.5 Flash Lite (batch)",
+      "id": "google/gemini-3.5-flash-lite:batch",
+      "price_per_1m_tokens": 0.7,
+      "context_length": 1048576,
+      "created": 1784646726
+    },
+    {
+      "model": "Meituan: LongCat 2.0",
+      "id": "meituan/longcat-2.0",
+      "price_per_1m_tokens": 0.75,
+      "context_length": 1048756,
+      "created": 1784554658
+    }
+  ],
+  "top_models": [
+    "Gemini",
+    "Flash",
+    "Pro"
+  ],
+  "rankings": [
+    {
+      "model": "Tencent: Hy4 preview",
+      "id": "tencent/hy4-preview",
+      "price_per_1m_tokens": 1.6675,
+      "context_length": 1048576,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Ling 3.0 Flash Fin (free)",
+      "id": "inclusionai/ling-3.0-flash-fin:free",
+      "price_per_1m_tokens": 0.0,
+      "context_length": 262144,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Qwen: Qwen3.8 Flash",
+      "id": "qwen/qwen3.8-flash",
+      "price_per_1m_tokens": 0.31,
+      "context_length": 1000000,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Z.ai: GLM 5.3 Flash",
+      "id": "z-ai/glm-5.3-flash",
+      "price_per_1m_tokens": 0.1625,
+      "context_length": 1310720,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Z.ai: GLM 5.3 Flash (batch)",
+      "id": "z-ai/glm-5.3-flash:batch",
+      "price_per_1m_tokens": 0.325,
+      "context_length": 1048575,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Meta: Muse Spark 1.2 Contributor",
+      "id": "meta/muse-spark-1.2-contributor",
+      "price_per_1m_tokens": 0.15,
+      "context_length": 1048576,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "DeepSeek: DeepSeek V4 Flash Vision Exp",
+      "id": "deepseek/deepseek-v4-flash-vision-exp",
+      "price_per_1m_tokens": 0.44,
+      "context_length": 1048576,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Tencent: Hy-MT2-1.8B",
+      "id": "tencent/hy-mt2-1.8b",
+      "price_per_1m_tokens": 0.1105,
+      "context_length": 8192,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Tencent: Hy-MT2-30B-A3B",
+      "id": "tencent/hy-mt2-30b-a3b",
+      "price_per_1m_tokens": 0.1845,
+      "context_length": 8192,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Z.ai: GLM Latest",
+      "id": "~z-ai/glm-latest",
+      "price_per_1m_tokens": 2.6837,
+      "context_length": 1310720,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Tencent: Hy-MT2-7B",
+      "id": "tencent/hy-mt2-7b",
+      "price_per_1m_tokens": 0.1845,
+      "context_length": 8192,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Z.ai: GLM 5.3",
+      "id": "z-ai/glm-5.3",
+      "price_per_1m_tokens": 2.9,
+      "context_length": 1310720,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Qwen: Qwen3.8 27B",
+      "id": "qwen/qwen3.8-27b",
+      "price_per_1m_tokens": 1.4875,
+      "context_length": 1000000,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Dots Studio: Dots3-Note Preview (free)",
+      "id": "dots-studio/dots-3-note-preview:free",
+      "price_per_1m_tokens": 0.0,
+      "context_length": 512000,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Google: Gemini 3.7 Flash",
+      "id": "google/gemini-3.7-flash",
+      "price_per_1m_tokens": 2.25,
+      "context_length": 1048576,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Google: Gemini 3.7 Flash (batch)",
+      "id": "google/gemini-3.7-flash:batch",
+      "price_per_1m_tokens": 0.5625,
+      "context_length": 1048576,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "ByteDance Seed: Seed 2.1 Turbo",
+      "id": "bytedance-seed/seed-2-1-turbo",
+      "price_per_1m_tokens": 1.5,
+      "context_length": 262144,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Qwen: Qwen3.8 2.4T A95B",
+      "id": "qwen/qwen3.8-2.4t-a95b",
+      "price_per_1m_tokens": 4.0,
+      "context_length": 1048576,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "Qwen: Qwen3.8 2.4T A95B (batch)",
+      "id": "qwen/qwen3.8-2.4t-a95b:batch",
+      "price_per_1m_tokens": 4.375,
+      "context_length": 1010000,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    },
+    {
+      "model": "ByteDance Seed: Seed-2.0-Code",
+      "id": "bytedance-seed/seed-2.0-code",
+      "price_per_1m_tokens": 1.75,
+      "context_length": 262144,
+      "tokens_weekly": "N/A",
+      "market_share": 0,
+      "trend": "N/A"
+    }
+  ]
+}
