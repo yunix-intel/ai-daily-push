@@ -444,7 +444,7 @@ def create_market_insights_section(market_insights):
     }
 
 
-def shape(report, market_insights=None):
+def shape(report, market_insights=None, news_metrics=None):
     sections, gi = [], 0
     flat_for_ranking = []
 
@@ -508,7 +508,12 @@ def shape(report, market_insights=None):
         "dailyUrl": report.get("links", {}).get("aihot", ""),
     }
     highlights = pick_highlights(flat_for_ranking, top_n=min(5, gi)) if gi else []
-    return {"meta": meta, "sections": sections, "highlights": highlights}
+    return {
+        "meta": meta,
+        "sections": sections,
+        "highlights": highlights,
+        "newsMetrics": news_metrics or {}
+    }
 
 # ----------------------------- HTML 生成 -----------------------------
 HTML_TMPL = r"""<!DOCTYPE html>
@@ -616,8 +621,121 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     }).join('');
   }
   let nav='';sections.forEach((s,i)=>{nav+='<a href="#sec-'+i+'">'+esc(s.label)+'<b>'+s.items.length+'</b></a>';});
+  // 添加新闻指标导航（如果有数据）
+  const newsMetrics=DATA.newsMetrics||{};
+  const hasMetrics=Object.values(newsMetrics).some(arr=>arr&&arr.length>0);
+  if(hasMetrics){nav+='<a href="#metrics-section">📊 行业数据<b>•</b></a>';}
   document.getElementById('navLinks').innerHTML=nav;
-  let main='';sections.forEach((s,i)=>{main+='<section class="section" id="sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
+  let main='';
+
+  // 渲染新闻指标板块（优先展示）
+  if(hasMetrics){
+    main+='<div class="market-divider" id="metrics-section"><h2>📊 行业数据洞察</h2></div>';
+
+    // ARR/营收
+    if(newsMetrics.ARR&&newsMetrics.ARR.length>0){
+      main+='<div class="block"><h2>💰 ARR / 营收数据</h2><ul style="list-style:none;padding:0">';
+      newsMetrics.ARR.forEach(m=>{
+        const company=esc(m.company||'');
+        const name=esc(m.metric_name||'');
+        const val=m.value||0;
+        const unit=m.unit||'';
+        let valStr='';
+        if(unit==='USD'){
+          valStr=val>=1e9?'$'+(val/1e9).toFixed(1)+'B':val>=1e6?'$'+(val/1e6).toFixed(1)+'M':'$'+val.toFixed(0);
+        }else if(unit==='亿美元'){
+          valStr=val+' 亿美元';
+        }else{
+          valStr=val.toLocaleString()+' '+unit;
+        }
+        const ctx=m.context?'（'+esc(m.context)+'）':'';
+        const conf=(m.confidence||0)*100;
+        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+' <span style="color:var(--muted);font-size:12px">置信度 '+conf.toFixed(0)+'%</span></li>';
+      });
+      main+='</ul></div>';
+    }
+
+    // 融资/估值
+    if(newsMetrics.融资&&newsMetrics.融资.length>0){
+      main+='<div class="block"><h2>💸 融资 / 估值</h2><ul style="list-style:none;padding:0">';
+      newsMetrics.融资.forEach(m=>{
+        const company=esc(m.company||'');
+        const name=esc(m.metric_name||'');
+        const val=m.value||0;
+        const unit=m.unit||'';
+        let valStr='';
+        if(unit==='USD'){
+          valStr=val>=1e9?'$'+(val/1e9).toFixed(1)+'B':val>=1e6?'$'+(val/1e6).toFixed(1)+'M':'$'+val.toFixed(0);
+        }else if(unit==='亿美元'){
+          valStr=val+' 亿美元';
+        }else{
+          valStr=val.toLocaleString()+' '+unit;
+        }
+        const ctx=m.context?'（'+esc(m.context)+'）':'';
+        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+'</li>';
+      });
+      main+='</ul></div>';
+    }
+
+    // 用户数据
+    if(newsMetrics.用户数&&newsMetrics.用户数.length>0){
+      main+='<div class="block"><h2>👥 用户数据</h2><ul style="list-style:none;padding:0">';
+      newsMetrics.用户数.forEach(m=>{
+        const company=esc(m.company||'');
+        const name=esc(m.metric_name||'');
+        const val=m.value||0;
+        const unit=m.unit||'';
+        let valStr='';
+        if(val>=1e8){
+          valStr=(val/1e8).toFixed(1)+' 亿'+unit;
+        }else if(val>=1e4){
+          valStr=(val/1e4).toFixed(1)+' 万'+unit;
+        }else{
+          valStr=val.toLocaleString()+' '+unit;
+        }
+        const ctx=m.context?'（'+esc(m.context)+'）':'';
+        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+'</li>';
+      });
+      main+='</ul></div>';
+    }
+
+    // Token 使用量
+    if(newsMetrics.Token使用量&&newsMetrics.Token使用量.length>0){
+      main+='<div class="block"><h2>🔢 Token 使用量</h2><ul style="list-style:none;padding:0">';
+      newsMetrics.Token使用量.forEach(m=>{
+        const company=esc(m.company||'');
+        const name=esc(m.metric_name||'');
+        const val=m.value||0;
+        const unit=m.unit||'';
+        let valStr='';
+        if(unit.toLowerCase().includes('tokens')){
+          valStr=val>=1e12?(val/1e12).toFixed(1)+'T tokens':val>=1e9?(val/1e9).toFixed(1)+'B tokens':val.toLocaleString()+' tokens';
+        }else{
+          valStr=val.toLocaleString()+' '+unit;
+        }
+        const ctx=m.context?'（'+esc(m.context)+'）':'';
+        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+'</li>';
+      });
+      main+='</ul></div>';
+    }
+
+    // 市场份额
+    if(newsMetrics.市场份额&&newsMetrics.市场份额.length>0){
+      main+='<div class="block"><h2>📈 市场份额</h2><ul style="list-style:none;padding:0">';
+      newsMetrics.市场份额.forEach(m=>{
+        const company=esc(m.company||'');
+        const name=esc(m.metric_name||'');
+        const val=m.value||0;
+        const valStr=(val*100).toFixed(1)+'%';
+        const ctx=m.context?'（'+esc(m.context)+'）':'';
+        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+'</li>';
+      });
+      main+='</ul></div>';
+    }
+  }
+
+  // 渲染新闻板块
+  sections.forEach((s,i)=>{main+='<section class="section" id="sec-'+i+'"><div class="section-head"><h2>'+esc(s.label)+'</h2><span class="count">'+s.items.length+' 条</span></div><div class="grid">';
     s.items.forEach(it=>{const orig=safeUrl(it.original||it.aihot||'#');const tl=safeUrl(it.aihot||it.original||'#');const tp=safeUrl(it.translatedPage||'');
       main+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
       main+='<h3><a href="'+esc(tl)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
@@ -842,6 +960,8 @@ def main():
 
     # 提取市场数据洞察
     market_insights = []
+    news_metrics = []  # 新增：新闻指标数据
+
     if MARKET_DATA_AVAILABLE:
         try:
             print("[1.5/4] 采集市场数据洞察 ...")
@@ -873,7 +993,36 @@ def main():
     else:
         print("[1.5/4] 市场数据模块未安装，跳过")
 
-    data = shape(combined_report, market_insights=market_insights)
+    # 从新闻中提取关键指标
+    print("[1.6/4] 从新闻提取关键指标（ARR/Token/用户数等）...")
+    try:
+        from news_metrics_extractor import extract_metrics_from_news
+        from llm_helpers import call_llm_json
+
+        # 准备新闻数据（合并所有新闻）
+        all_news_items = []
+        for section in combined_report.get('sections', []):
+            all_news_items.extend(section.get('items', []))
+
+        if all_news_items:
+            # LLM 调用包装器
+            def metrics_llm_caller(system_prompt, user_prompt, model=None):
+                return call_llm_json(system_prompt, user_prompt, model=model)
+
+            # 提取指标
+            metrics_result = extract_metrics_from_news(all_news_items, metrics_llm_caller)
+            news_metrics = metrics_result.get('grouped_metrics', {})
+
+            total_metrics = metrics_result.get('high_confidence_count', 0)
+            print(f"     ✓ 提取到 {total_metrics} 个高置信度指标")
+        else:
+            print(f"     无新闻数据，跳过指标提取")
+
+    except Exception as e:
+        print(f"     [WARN] 指标提取失败，跳过：{e}")
+        news_metrics = []
+
+    data = shape(combined_report, market_insights=market_insights, news_metrics=news_metrics)
     print(f"     成功：共 {data['meta']['total']} 条，版块 {[s['label'] for s in data['sections']]}")
 
     print("[2/4] 生成 HTML 仪表盘 ...")
