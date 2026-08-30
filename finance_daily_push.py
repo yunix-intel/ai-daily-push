@@ -277,6 +277,82 @@ def translate_finance_items(items):
         print(f"     [!] LLM 翻译失败，保留英文原文：{exc}")
         return items
 
+
+def pre_translate_articles(items_international):
+    """
+    预翻译国际要闻全文
+
+    优先级：
+    1. 核心必读（importance_score >= 8）
+    2. 重要要闻前 5 条（5 <= importance_score < 8）
+
+    Args:
+        items_international: 国际要闻列表
+
+    Returns:
+        无返回值，直接修改 items 添加 translatedPage 字段
+    """
+    from article_extractor import extract_article
+    from translation_service import translate_article_llm
+    from static_page_generator import generate_translation_page
+
+    # 筛选需要翻译的文章
+    candidates = []
+
+    # 1. 核心必读
+    must_read = [item for item in items_international if item.get('importance_score', 0) >= 8]
+    candidates.extend(must_read)
+
+    # 2. 重要要闻前 5 条
+    important = [item for item in items_international if 5 <= item.get('importance_score', 0) < 8]
+    candidates.extend(important[:5])
+
+    if not candidates:
+        print("     无需翻译的核心文章")
+        return
+
+    print(f"     准备翻译 {len(candidates)} 篇文章全文 ...")
+
+    success_count = 0
+    for item in candidates:
+        url = item.get('link', '')
+        if not url:
+            continue
+
+        try:
+            # 1. 提取原文
+            article = extract_article(url)
+            if not article:
+                print(f"     [!] 文章提取失败：{url[:60]}")
+                continue
+
+            # 2. LLM 翻译
+            translated_text = translate_article_llm(article['text'], call_llm_json)
+            if not translated_text or len(translated_text) < 100:
+                print(f"     [!] 翻译失败或过短：{url[:60]}")
+                continue
+
+            # 3. 生成静态页面
+            article_data = {
+                'title': item.get('title', ''),
+                'url': url,
+                'source': item.get('source', ''),
+                'author': article.get('author', ''),
+                'date': article.get('publish_date', '')
+            }
+            page_path = generate_translation_page(article_data, translated_text)
+
+            # 4. 更新 item
+            item['translatedPage'] = f"https://yunix-intel.github.io/ai-daily-push/{page_path}"
+            success_count += 1
+
+        except Exception as e:
+            print(f"     [!] 全文翻译失败：{str(e)[:60]}")
+            continue
+
+    print(f"     全文翻译完成：{success_count}/{len(candidates)} 篇")
+
+
 # ----------------------------- 板块分类 -----------------------------
 # 国内板块规则
 SECTION_RULES_DOMESTIC = [
@@ -967,11 +1043,19 @@ def main():
 
     # 翻译国际新闻
     if items_international:
-        print("     [2.2] 翻译国际要闻 ...")
+        print("     [2.2] 翻译国际要闻标题摘要 ...")
         translate_finance_items(items_international)
 
+    # 预翻译核心文章全文
+    if items_international:
+        print("     [2.3] 预翻译核心文章全文 ...")
+        try:
+            pre_translate_articles(items_international)
+        except Exception as exc:
+            print(f"     [!] 全文翻译失败，跳过：{exc}")
+
     # 识别突发事件
-    print("     [2.3] 识别突发事件 ...")
+    print("     [2.4] 识别突发事件 ...")
     try:
         # 使用相同的 llm_wrapper
         def llm_wrapper(system_prompt, user_prompt, model=None):
