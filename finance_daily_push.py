@@ -286,6 +286,10 @@ def pre_translate_articles(items_international):
     1. 核心必读（importance_score >= 8）
     2. 重要要闻前 5 条（5 <= importance_score < 8）
 
+    过滤规则：
+    - 排除快讯链接（/live/, /flash/, /kuaixun/ 等）
+    - 只翻译完整文章页面
+
     Args:
         items_international: 国际要闻列表
 
@@ -295,6 +299,20 @@ def pre_translate_articles(items_international):
     from article_extractor import extract_article
     from translation_service import translate_article_llm
     from static_page_generator import generate_translation_page
+
+    # 快讯链接特征（不适合全文翻译）
+    QUICK_NEWS_PATTERNS = [
+        '/live/',       # 格隆汇快讯
+        '/flash/',      # 闪讯
+        '/kuaixun/',    # 快讯
+        '/bulletin/',   # 简报
+        '/brief/',      # 简讯
+    ]
+
+    def is_full_article(url):
+        """判断是否为完整文章页面（非快讯）"""
+        url_lower = url.lower()
+        return not any(pattern in url_lower for pattern in QUICK_NEWS_PATTERNS)
 
     # 筛选需要翻译的文章
     candidates = []
@@ -307,14 +325,21 @@ def pre_translate_articles(items_international):
     important = [item for item in items_international if 5 <= item.get('importance_score', 0) < 8]
     candidates.extend(important[:5])
 
-    if not candidates:
-        print("     无需翻译的核心文章")
+    # 3. 过滤快讯链接
+    candidates_filtered = [item for item in candidates if is_full_article(item.get('link', ''))]
+    skipped_count = len(candidates) - len(candidates_filtered)
+
+    if skipped_count > 0:
+        print(f"     过滤快讯链接：{skipped_count} 条")
+
+    if not candidates_filtered:
+        print("     无需翻译的核心文章（已过滤快讯）")
         return
 
-    print(f"     准备翻译 {len(candidates)} 篇文章全文 ...")
+    print(f"     准备翻译 {len(candidates_filtered)} 篇文章全文 ...")
 
     success_count = 0
-    for item in candidates:
+    for item in candidates_filtered:
         url = item.get('link', '')
         if not url:
             continue
@@ -350,7 +375,7 @@ def pre_translate_articles(items_international):
             print(f"     [!] 全文翻译失败：{str(e)[:60]}")
             continue
 
-    print(f"     全文翻译完成：{success_count}/{len(candidates)} 篇")
+    print(f"     全文翻译完成：{success_count}/{len(candidates_filtered)} 篇")
 
 
 # ----------------------------- 板块分类 -----------------------------
