@@ -1236,26 +1236,23 @@ def main():
         print("\n[额外] 发布到微信公众号...")
         try:
             from wechat_official import publish_to_wechat
-            from wechat_content_builder import (
-                html_to_wechat_finance_article,
-                prepare_finance_daily_cover
-            )
+            from wechat_content_formatter import format_finance_daily_for_wechat
+            from cover_generator import get_or_create_cover, create_default_cover
 
-            # 准备封面图
-            cover_path = prepare_finance_daily_cover(HERE)
-            if not cover_path:
-                print("     [!] 封面图准备失败，跳过公众号发布")
-            else:
-                # 准备内容
-                article_title = f"财经日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%Y年%m月%d日')}"
-                article_content = html_to_wechat_finance_article(
-                    open(out_html, encoding="utf-8").read(),
-                    article_title,
-                    dashboard_url
-                )
-                article_digest = f"股市行情 · 财经快讯 · 市场分析 · 策略建议 · 共 {data['meta']['total']} 条资讯"
+            # 格式化内容
+            article_title, article_content, article_digest = format_finance_daily_for_wechat(data)
 
-                # 发布
+            # 获取或生成封面图
+            date_str = data['meta']['date']
+            cover_path = get_or_create_cover(date_str, cover_type="finance")
+
+            # 如果封面生成失败，使用默认封面
+            if not cover_path or not os.path.exists(cover_path):
+                print("     使用默认封面...")
+                cover_path = create_default_cover(cover_type="finance")
+
+            if cover_path and os.path.exists(cover_path):
+                # 发布到公众号
                 publish_id = publish_to_wechat(
                     appid=wechat_appid,
                     appsecret=wechat_appsecret,
@@ -1271,6 +1268,8 @@ def main():
                     print(f"     ✓ 公众号发布成功！publish_id: {publish_id}")
                 else:
                     print("     [!] 公众号发布失败")
+            else:
+                print("     [!] 封面图不可用，跳过公众号发布")
 
         except ImportError as e:
             print(f"     [!] 缺少微信公众号发布模块：{e!r}")
