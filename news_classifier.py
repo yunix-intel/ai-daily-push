@@ -92,8 +92,14 @@ def classify_by_keywords(item: Dict) -> Literal['domestic', 'international']:
         return 'international'
     else:
         # 默认根据来源判断
-        source = item.get('source', {}).get('name', '').lower()
-        if any(s in source for s in ['新浪', '东方财富', '证券', '财联社', '格隆汇']):
+        source = item.get('source', '')
+        # source 可能是字符串或字典
+        if isinstance(source, dict):
+            source_name = source.get('name', '').lower()
+        else:
+            source_name = str(source).lower()
+
+        if any(s in source_name for s in ['新浪', '东方财富', '证券', '财联社', '格隆汇']):
             return 'domestic'
         else:
             return 'international'
@@ -119,8 +125,13 @@ def score_news_importance_batch(items: List[Dict], llm_call_func, market_context
     for i, item in enumerate(items, 1):
         title = item.get('title', '')
         summary = item.get('summary', '')
-        source = item.get('source', {}).get('name', '')
-        news_list.append(f"{i}. [{source}] {title}\n   {summary[:150]}")
+        source = item.get('source', '')
+        # source 可能是字符串或字典
+        if isinstance(source, dict):
+            source_name = source.get('name', '')
+        else:
+            source_name = str(source)
+        news_list.append(f"{i}. [{source_name}] {title}\n   {summary[:150]}")
 
     system_prompt = "你是财经新闻分析专家。只返回 JSON 数组，不要其他文字。"
 

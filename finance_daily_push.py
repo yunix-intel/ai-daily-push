@@ -920,29 +920,52 @@ def main():
 
     print(f"     [2.1] LLM 智能分类（区域+重要性）...")
     try:
+        # 包装 call_llm_json，使其返回字符串供 news_classifier 使用
+        def llm_wrapper(system_prompt, user_prompt, model=None):
+            result = call_llm_json(system_prompt, user_prompt, model=model)
+            # call_llm_json 返回 dict，转为 JSON 字符串
+            return json.dumps(result, ensure_ascii=False)
+
         # 区域重新分类（解决格隆汇等来源的分类问题）
-        regions = classify_news_region_batch(all_items, call_llm_json)
+        try:
+            regions = classify_news_region_batch(all_items, llm_wrapper)
+        except Exception as e:
+            print(f"     [!] 区域分类失败，使用原始分类：{e}")
+            regions = []
 
         # 重要性评分
-        scores = score_news_importance_batch(all_items, call_llm_json)
+        try:
+            scores = score_news_importance_batch(all_items, llm_wrapper)
+        except Exception as e:
+            print(f"     [!] 重要性评分失败，使用默认分数：{e}")
+            scores = []
 
         # 更新分类和评分
-        for i, item in enumerate(all_items):
-            item['region'] = regions[i] if i < len(regions) else 'domestic'
-            item['importance_score'] = scores[i] if i < len(scores) else 5
+        if regions and len(regions) == len(all_items):
+            for i, item in enumerate(all_items):
+                item['region'] = regions[i]
+                item['importance_score'] = scores[i] if i < len(scores) else 5
 
-        # 重新分组
-        items_domestic = [item for item in all_items if item.get('region') == 'domestic']
-        items_international = [item for item in all_items if item.get('region') == 'international']
+            # 重新分组
+            items_domestic = [item for item in all_items if item.get('region') == 'domestic']
+            items_international = [item for item in all_items if item.get('region') == 'international']
 
-        print(f"     重新分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
+            print(f"     重新分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
 
-        # 按重要性排序
-        items_domestic.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
-        items_international.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
+            # 按重要性排序
+            items_domestic.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
+            items_international.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
+        else:
+            # 分类失败，使用原始分组
+            items_domestic = items_grouped["domestic"]
+            items_international = items_grouped["international"]
+            # 默认评分
+            for item in items_domestic + items_international:
+                item['importance_score'] = 5
+            print(f"     使用原始分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
 
     except Exception as exc:
-        print(f"     [!] 智能分类失败，使用原始分类：{exc}")
+        print(f"     [!] 智能分类模块异常：{exc}")
         items_domestic = items_grouped["domestic"]
         items_international = items_grouped["international"]
         # 默认评分
@@ -957,8 +980,13 @@ def main():
     # 识别突发事件
     print("     [2.3] 识别突发事件 ...")
     try:
-        breaking_events_domestic = identify_breaking_news(items_domestic, call_llm_json) if items_domestic else []
-        breaking_events_international = identify_breaking_news(items_international, call_llm_json) if items_international else []
+        # 使用相同的 llm_wrapper
+        def llm_wrapper(system_prompt, user_prompt, model=None):
+            result = call_llm_json(system_prompt, user_prompt, model=model)
+            return json.dumps(result, ensure_ascii=False)
+
+        breaking_events_domestic = identify_breaking_news(items_domestic, llm_wrapper) if items_domestic else []
+        breaking_events_international = identify_breaking_news(items_international, llm_wrapper) if items_international else []
         print(f"     突发事件：国内 {len(breaking_events_domestic)} 个，国际 {len(breaking_events_international)} 个")
     except Exception as exc:
         print(f"     [!] 突发事件识别失败：{exc}")
