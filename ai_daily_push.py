@@ -371,9 +371,79 @@ def translate_page_url(original_url):
     return "https://translate.google.com/translate?sl=auto&tl=zh-CN&u=" + urllib.parse.quote(original_url, safe="")
 
 
-def shape(report):
+def create_market_insights_section(market_insights):
+    """
+    将市场洞察数据转换为新闻条目格式
+
+    Args:
+        market_insights: 整合后的市场数据
+
+    Returns:
+        格式化的板块数据
+    """
+    items = []
+    idx = 0
+
+    highlights = market_insights.get('highlights', {})
+
+    # 官方公告数据
+    for item in highlights.get('official_announcements', [])[:5]:
+        idx += 1
+        items.append({
+            'idx': f"M{idx}",
+            'title': item['text'],
+            'summary': f"数据来源：{item.get('source', '新闻报道')} | 类型：{item.get('type', 'data')}",
+            'source': '市场数据',
+            'original': '',
+            'aihot': '',
+            'translatedPage': ''
+        })
+
+    # 市场使用趋势
+    for item in highlights.get('market_usage', [])[:3]:
+        idx += 1
+        items.append({
+            'idx': f"M{idx}",
+            'title': f"📈 {item['text']}",
+            'summary': f"数据来源：OpenRouter 实时统计 | 查看详情：https://openrouter.ai/rankings",
+            'source': 'OpenRouter',
+            'original': 'https://openrouter.ai/rankings',
+            'aihot': '',
+            'translatedPage': ''
+        })
+
+    # 性能基准
+    for item in highlights.get('performance_benchmarks', [])[:3]:
+        idx += 1
+        items.append({
+            'idx': f"M{idx}",
+            'title': f"⚡ {item['text']}",
+            'summary': f"数据来源：Artificial Analysis 性能测试 | 查看详情：https://artificialanalysis.ai",
+            'source': 'Artificial Analysis',
+            'original': 'https://artificialanalysis.ai',
+            'aihot': '',
+            'translatedPage': ''
+        })
+
+    if not items:
+        return None
+
+    return {
+        'label': '📊 行业数据洞察',
+        'items': items
+    }
+
+
+def shape(report, market_insights=None):
     sections, gi = [], 0
     flat_for_ranking = []
+
+    # 如果有市场洞察数据，插入到最前面
+    if market_insights and market_insights.get('highlights'):
+        market_section = create_market_insights_section(market_insights)
+        if market_section:
+            sections.append(market_section)
+
     for s in report.get("sections", []):
         label = s.get("label", "")
         its = []
@@ -383,6 +453,14 @@ def shape(report):
             original_title = it.get("originalTitle", title)
             original_link = it.get("links", {}).get("original", "")
             is_translated = bool(original_title) and original_title != title
+
+            # 对所有有效的链接都生成翻译选项（不仅仅是已翻译的内容）
+            # 判断是否需要翻译：有原文链接，且标题中包含英文或已被翻译
+            needs_translation = bool(original_link) and (
+                is_translated or
+                bool(re.search(r'[a-zA-Z]{3,}', original_title))  # 包含3个以上连续英文字母
+            )
+
             entry = {
                 "idx": gi,
                 "title": title,
@@ -392,7 +470,7 @@ def shape(report):
                 "source": it.get("source", {}).get("name", ""),
                 "original": original_link,
                 "aihot": it.get("links", {}).get("aihot", ""),
-                "translatedPage": translate_page_url(original_link) if is_translated else "",
+                "translatedPage": translate_page_url(original_link) if needs_translation else "",
             }
             its.append(entry)
             flat_for_ranking.append((entry, label))
@@ -450,9 +528,9 @@ HTML_TMPL = r"""<!DOCTYPE html>
   .card .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
   .card .idx{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#3b6fd4);color:#fff;font-weight:800;font-size:15px;flex:0 0 auto}
   .chip{font-size:12px;color:var(--muted);background:var(--chip);border:1px solid var(--border);padding:4px 10px;border-radius:999px;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .card h3{font-size:16.5px;font-weight:700;line-height:1.45;margin-bottom:9px}
+  .card h3{font-size:16.5px;font-weight:700;line-height:1.45;margin-bottom:9px;text-align:justify}
   .card h3 a:hover{color:var(--accent)}
-  .card .summary{font-size:14px;color:#c4ccd8;flex:1;margin-bottom:10px}
+  .card .summary{font-size:14px;color:#c4ccd8;flex:1;margin-bottom:10px;text-align:justify}
   .card .original-text{font-size:12.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;margin-bottom:14px}
   .card .foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
   .src{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -738,7 +816,37 @@ def main():
         print(f"     当日未生成，已回退到最近一期：{used_date}")
     combined_report = aggregate_sources(raw["report"])
     combined_report = translate_items(combined_report)
-    data = shape(combined_report)
+
+    # 提取市场数据洞察
+    market_insights = None
+    try:
+        print("[1.5/4] 提取市场数据洞察 ...")
+        from data.market_data_aggregator import aggregate_market_data
+        from scrapers import fetch_openrouter_data, fetch_aa_data
+
+        # 尝试获取外部数据（失败不影响主流程）
+        openrouter_data = None
+        aa_data = None
+        try:
+            openrouter_data = fetch_openrouter_data()
+        except Exception as e:
+            print(f"     [WARN] OpenRouter 数据获取失败：{e}")
+
+        try:
+            aa_data = fetch_aa_data()
+        except Exception as e:
+            print(f"     [WARN] Artificial Analysis 数据获取失败：{e}")
+
+        # 整合数据
+        market_insights = aggregate_market_data(
+            combined_report.get('sections', []),
+            openrouter_data,
+            aa_data
+        )
+    except Exception as e:
+        print(f"     [WARN] 市场数据整合失败，跳过该板块：{e}")
+
+    data = shape(combined_report, market_insights=market_insights)
     print(f"     成功：共 {data['meta']['total']} 条，版块 {[s['label'] for s in data['sections']]}")
 
     print("[2/4] 生成 HTML 仪表盘 ...")
