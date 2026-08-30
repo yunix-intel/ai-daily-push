@@ -65,7 +65,18 @@ class TestScrapers(unittest.TestCase):
         self.assertIsInstance(data['speed'], list)
         self.assertIsInstance(data['cost'], list)
 
+        # Phase A3 增强字段验证
+        self.assertIn('date', data)
+
+        # 数据质量验证
+        if len(data.get('intelligence', [])) > 0:
+            intel = data['intelligence'][0]
+            self.assertIn('model', intel)
+            self.assertIn('score', intel)
+            self.assertIsInstance(intel['score'], int)
+
         print(f"[OK] Artificial Analysis data fetch test passed")
+        print(f"  - Date: {data.get('date', 'N/A')}")
         print(f"  - Intelligence: {len(data['intelligence'])} items")
         print(f"  - Speed: {len(data['speed'])} items")
         print(f"  - Cost: {len(data['cost'])} items")
