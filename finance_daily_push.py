@@ -10,7 +10,7 @@
 流程：
   1. 抓取指数行情快照（腾讯行情接口，GBK）作为事实锚点，避免 LLM 编造点位。
   2. 多来源抓取财经快讯（中文 RSS + 英文 RSS），去重并过滤到「过去 24 小时」。
-  3. 英文条目翻译成中文（复用 ai_daily_push 的 MyMemory + 专有名词占位保护）。
+  3. 英文条目用 LLM 批量翻译成中文（标题+摘要一起翻译，保留上下文）。
   4. LLM 第一次调用：识别过去 24 小时突发事件 + 生成今日总结/宏观分析/板块分析。
   5. LLM 第二次调用：基于上一步结论 + 行情快照，给出 A股/港股方向性策略建议（含免责声明）。
   6. 生成 finance_dashboard.html，并把要点推送为一条 markdown 消息。
@@ -228,28 +228,29 @@ def fetch_finance_items(hours=24, per_feed=20):
     return {"domestic": collected_zh, "international": collected_en}
 
 
-def translate_finance_items(items, give_up_after=4):
-    """英文条目译为中文，保留原文；失败则回退英文原文，不中断整体流程。
+def translate_finance_items(items):
+    """用 LLM 批量翻译英文条目为中文，保留原文；失败则保留英文原文。
 
-    优先走 LLM 批量翻译（一次请求翻多条）：MyMemory 是按 IP 限流的免费接口，
-    逐条调用几十条必然被打成 429，且每次失败要重试到超时（实测单条约 17s）。
-    LLM 不可用（未配置 key 等）时退回 MyMemory 逐条翻译，并保留熔断：
-    连续 give_up_after 条失败就放弃剩余翻译，避免把 CI 拖死。
+    使用 LLM 批量翻译（一次请求翻多条），避免外部翻译 API 的限流问题。
+    LLM 不可用时直接保留英文原文，不再尝试其他翻译接口。
 
     items: 列表，直接修改每个 item 的 title/summary，并添加 originalTitle/originalSummary
     """
+    # 1. 保存原文
     for item in items:
         item["originalTitle"] = item["title"]
         item["originalSummary"] = item["summary"]
 
+    # 2. 找出英文条目
     en_indexes = [i for i, item in enumerate(items) if item.get("isEnglish")]
     if not en_indexes:
         print("     无英文条目，跳过翻译")
         return items
 
-    # ---- 首选：LLM 批量翻译 ----
-    api_key = _llm_config()[0]
-    if api_key:
+    print(f"     检测到 {len(en_indexes)} 条英文新闻，准备批量翻译 ...")
+
+    # 3. LLM 批量翻译
+    try:
         pairs = [(i, items[i]["title"], items[i]["summary"]) for i in en_indexes]
         mapping = translate_batch_llm(pairs)
         done = 0
@@ -264,42 +265,17 @@ def translate_finance_items(items, give_up_after=4):
                 items[i]["summary"] = summary_zh
             if title_zh:
                 done += 1
-        print(f"     LLM 翻译完成：{done}/{len(en_indexes)} 条（未译的保留英文原文）")
-        if done:
-            return items
-        print("     LLM 翻译未产出结果，回退 MyMemory 逐条翻译")
 
-    # ---- 回退：MyMemory 逐条 + 熔断 ----
-    translated, failed, consecutive_fail = 0, 0, 0
-    gave_up = False
-    for i in en_indexes:
-        if gave_up:
-            break
-        item = items[i]
-        ok = True
-        try:
-            item["title"] = translate_text(item["originalTitle"], terms=FINANCE_TERMS)
-        except Exception as exc:
-            ok = False
-            print(f"     标题翻译失败，保留英文：{exc}")
-        try:
-            if item["originalSummary"]:
-                item["summary"] = translate_text(item["originalSummary"], terms=FINANCE_TERMS)
-        except Exception as exc:
-            ok = False
-            print(f"     摘要翻译失败，保留英文：{exc}")
-        if ok:
-            translated += 1
-            consecutive_fail = 0
+        if done > 0:
+            print(f"     LLM 翻译完成：{done}/{len(en_indexes)} 条")
         else:
-            failed += 1
-            consecutive_fail += 1
-            if consecutive_fail >= give_up_after:
-                gave_up = True
-                print(f"     [!] 连续 {consecutive_fail} 条翻译失败（疑似接口限流），"
-                      f"放弃剩余翻译，全部保留英文原文。")
-    print(f"     MyMemory 翻译完成：{translated} 条，失败：{failed} 条" + ("（已提前放弃）" if gave_up else ""))
-    return items
+            print(f"     LLM 翻译未产出结果，保留英文原文")
+
+        return items
+
+    except Exception as exc:
+        print(f"     [!] LLM 翻译失败，保留英文原文：{exc}")
+        return items
 
 # ----------------------------- 板块分类 -----------------------------
 # 国内板块规则
@@ -413,37 +389,54 @@ TRANSLATE_SYSTEM = (
 )
 
 
-def translate_batch_llm(pairs, batch_size=12):
+def translate_batch_llm(pairs, batch_size=10):
     """用 LLM 批量翻译英文条目：pairs 为 [(idx, title, summary)]。
 
-    返回 {idx: (title_zh, summary_zh)}。相比逐条调 MyMemory（每条 2 次请求、
-    且会被按 IP 限流打成 429），这里一次请求翻多条，几十条只需几次调用。
+    返回 {idx: (title_zh, summary_zh)}。批量翻译避免外部 API 的限流问题。
     单批失败只影响该批，其余批次照常。
     """
     result = {}
+    total_batches = (len(pairs) + batch_size - 1) // batch_size
+
     for start in range(0, len(pairs), batch_size):
         batch = pairs[start:start + batch_size]
+        batch_num = start // batch_size + 1
+
         listing = []
         for idx, title, summary in batch:
-            listing.append(json.dumps({"id": idx, "title": title, "summary": summary[:300]}, ensure_ascii=False))
+            listing.append(json.dumps(
+                {"id": idx, "title": title, "summary": summary[:300]},
+                ensure_ascii=False
+            ))
+
         user_prompt = (
             "把下面每条英文财经资讯的 title 和 summary 翻译成简体中文。\n"
             "输入（每行一个 JSON 对象）：\n" + "\n".join(listing) + "\n\n"
             '输出 JSON：{"items":[{"id":原样返回的id,"title":"中文标题","summary":"中文摘要"}]}\n'
             "summary 为空则中文 summary 也返回空字符串。必须覆盖全部输入条目。"
         )
+
         try:
             data = call_llm_json(TRANSLATE_SYSTEM, user_prompt, retries=1)
-            for row in data.get("items") or []:
+            items_translated = data.get("items") or []
+
+            for row in items_translated:
                 rid = row.get("id")
                 if isinstance(rid, str) and rid.isdigit():
                     rid = int(rid)
                 if rid is None:
                     continue
-                result[rid] = ((row.get("title") or "").strip(), (row.get("summary") or "").strip())
-            print(f"     LLM 翻译批次 {start // batch_size + 1}：{len(batch)} 条送译")
+
+                title_zh = (row.get("title") or "").strip()
+                summary_zh = (row.get("summary") or "").strip()
+
+                result[rid] = (title_zh, summary_zh)
+
+            print(f"     批次 {batch_num}/{total_batches}：{len(items_translated)}/{len(batch)} 条翻译成功")
+
         except Exception as exc:
-            print(f"     LLM 翻译批次 {start // batch_size + 1} 失败（该批保留英文）：{exc!r}")
+            print(f"     批次 {batch_num}/{total_batches} 失败（该批保留英文）：{exc!r}")
+
     return result
 
 
