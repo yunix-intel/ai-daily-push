@@ -11,7 +11,7 @@
 
 ## 工作原理
 
-- `ai_daily_push.py`：拉取 AI HOT 日报 + 4 个 AI 资讯 RSS → 英文条目译中文（保留原文）→ 生成 `ai_daily_dashboard.html` → 推送图文卡片。
+- `ai_daily_push.py`：拉取 AI HOT 日报 + 4 个 AI 资讯 RSS → 英文条目译中文（保留原文）→ **[新增]** 采集市场数据（OpenRouter + Artificial Analysis）→ 生成 `ai_daily_dashboard.html`（6个板块）→ 推送图文卡片。
 - `finance_daily_push.py`：抓指数行情 + 6 个财经源（3 中文 / 3 英文，过去 24 小时）→ LLM 批量翻译 → LLM 生成突发事件/今日总结/市场分析 → LLM 生成 A股/港股策略建议 → 生成 `finance_dashboard.html` → 推送 markdown。
 - `.github/workflows/daily.yml`：定时（`cron 0 0 * * *` = 北京 08:00）+ 手动触发，两步依次执行后一起部署到 Pages。财经日报那步带 `continue-on-error`，它失败不会影响已成功的 AI 日报。
 
@@ -54,6 +54,99 @@
 python ai_daily_push.py --no-push        # 只生成 AI 日报网页
 python finance_daily_push.py --no-push   # 只生成财经网页，打印实际会发送的 markdown
 ```
+
+### 市场数据分析模块测试
+
+```bash
+# 测试市场数据聚合器
+python -m analyzers.market_data_aggregator
+
+# 测试趋势分析器
+python -m analyzers.trend_analyzer
+
+# 查看缓存的市场数据
+ls -lh data/market_data/
+cat data/market_data/openrouter_2026-08-30.json | jq .
+```
+
+---
+
+## 🆕 AI 日报市场数据分析功能
+
+AI 日报现已集成「📊 行业数据洞察」板块，自动采集和分析 AI 市场数据。
+
+### 数据来源
+
+| 数据源 | 内容 | 更新频率 | API 费用 |
+|---|---|---|---|
+| **OpenRouter API** | 396+ 个 AI 模型价格数据 | 实时 | 免费 |
+| **Artificial Analysis** | 性能基准测试（智能、速度、成本） | 每周 | 免费（网页抓取） |
+| **新闻指标提取**（可选） | 从新闻中提取营收、融资、用户数等 | 每日 | 需 OpenAI API Key |
+
+### 展示内容
+
+**📈 市场使用趋势**（OpenRouter）
+- 总模型数：396+ 个
+- 价格范围：$0.042 - $30.00 / 1M tokens
+- 平均价格统计
+- 热门模型 Top 3
+
+**⚡ 性能基准**（Artificial Analysis）
+- 智能排名 Top 5
+- 速度排名 Top 3
+- 成本排名 Top 3
+
+**💡 官方公布数据**（可选，需 API Key）
+- 从新闻中提取的营收/ARR
+- 融资金额和轮次
+- 用户增长数据
+- 价格变化信息
+
+**🔍 交叉验证**
+- 多源数据印证
+- 确认/待确认项统计
+
+### 可选配置
+
+新闻指标提取功能需要配置 OpenAI API Key（可选）：
+
+```bash
+# GitHub Actions Secrets（推荐）
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.openai.com/v1  # 可选，默认官方 API
+
+# 或本地测试
+export OPENAI_API_KEY=sk-...
+python ai_daily_push.py --no-push
+```
+
+**成本说明**：
+- OpenRouter API：免费（公开数据）
+- Artificial Analysis：免费（网页抓取）
+- OpenAI API（可选）：
+  - 使用 `gpt-4o-mini` 模型
+  - 每次运行约 $0.001-0.005
+  - 未配置时自动跳过，不影响其他数据
+
+### 错误处理
+
+所有市场数据采集失败均不影响主流程：
+
+- OpenRouter 失败 → 使用缓存数据
+- Artificial Analysis 失败 → 使用缓存数据
+- OpenAI API 失败 → 跳过新闻指标提取
+- 全部失败 → 市场数据板块为空，其他板块正常显示
+
+### 缓存机制
+
+- 数据按日期缓存到 `data/market_data/`
+- 当日数据优先使用 API
+- 历史数据自动降级到最近可用缓存
+- 缓存文件示例：
+  - `openrouter_2026-08-30.json`
+  - `artificial_analysis_2026-08-30.json`
+
+---
 
 ## 隐私说明
 
