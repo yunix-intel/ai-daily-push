@@ -5,9 +5,10 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 流程：
   1. 拉取 AI HOT 当日日报；若当日未生成则回退到最近一期（按官方 skill 规则）。
   2. 同步抓取多个 AI 资讯 RSS 来源，去重后合并到仪表盘。
-  3. 生成单文件 HTML 仪表盘（内联 CSS/JS，五版块，全局连续编号，≤60 字摘要，北京时间）。
-  4. 渲染 Markdown 摘要（五版块要点 + 原文链接）。
-  5. 推送 markdown 消息到 pushplus，再由 pushplus 转发到你的个人微信；
+  3. 采集市场数据（OpenRouter + Artificial Analysis）。
+  4. 生成单文件 HTML 仪表盘（内联 CSS/JS，六版块，全局连续编号，≤60 字摘要，北京时间）。
+  5. 渲染 Markdown 摘要（六版块要点 + 原文链接）。
+  6. 推送 markdown 消息到 pushplus，再由 pushplus 转发到你的个人微信；
      若配置了 dashboard_url 则附上仪表盘链接。
 
 配置：同目录 push_config.json
@@ -28,6 +29,15 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 import json, sys, os, re, html, time, urllib.parse, urllib.request, urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
+
+# 导入市场数据模块
+try:
+    from analyzers.market_data_aggregator import MarketDataAggregator
+    from analyzers.market_report_formatter import MarketReportFormatter
+    MARKET_DATA_AVAILABLE = True
+except ImportError as e:
+    print(f"  [WARN] 市场数据模块导入失败：{e}")
+    MARKET_DATA_AVAILABLE = False
 
 BASE = "https://aihot.virxact.com/api/v1"
 UA = "aihot-skill/1.2.1 (+https://aihot.virxact.com/aihot-skill/)"
@@ -438,12 +448,6 @@ def shape(report, market_insights=None):
     sections, gi = [], 0
     flat_for_ranking = []
 
-    # 如果有市场洞察数据，插入到最前面
-    if market_insights and market_insights.get('highlights'):
-        market_section = create_market_insights_section(market_insights)
-        if market_section:
-            sections.append(market_section)
-
     for s in report.get("sections", []):
         label = s.get("label", "")
         its = []
@@ -475,6 +479,25 @@ def shape(report, market_insights=None):
             its.append(entry)
             flat_for_ranking.append((entry, label))
         sections.append({"label": label, "items": its})
+
+    # 添加市场数据洞察板块（放在最后）
+    if market_insights:
+        market_items = []
+        for insight in market_insights:
+            gi += 1
+            market_items.append({
+                "idx": gi,
+                "title": insight.get("title", ""),
+                "originalTitle": "",
+                "summary": insight.get("summary", ""),
+                "originalSummary": "",
+                "source": insight.get("source", ""),
+                "original": insight.get("link", ""),
+                "aihot": "",
+                "translatedPage": "",
+            })
+        sections.append({"label": "📊 行业数据洞察", "items": market_items})
+
     meta = {
         "date": report.get("date", ""),
         "windowStart": report.get("windowStart", ""),
@@ -818,33 +841,37 @@ def main():
     combined_report = translate_items(combined_report)
 
     # 提取市场数据洞察
-    market_insights = None
-    try:
-        print("[1.5/4] 提取市场数据洞察 ...")
-        from data.market_data_aggregator import aggregate_market_data
-        from scrapers import fetch_openrouter_data, fetch_aa_data
-
-        # 尝试获取外部数据（失败不影响主流程）
-        openrouter_data = None
-        aa_data = None
+    market_insights = []
+    if MARKET_DATA_AVAILABLE:
         try:
-            openrouter_data = fetch_openrouter_data()
-        except Exception as e:
-            print(f"     [WARN] OpenRouter 数据获取失败：{e}")
+            print("[1.5/4] 采集市场数据洞察 ...")
+            aggregator = MarketDataAggregator()
+            formatter = MarketReportFormatter()
 
-        try:
-            aa_data = fetch_aa_data()
-        except Exception as e:
-            print(f"     [WARN] Artificial Analysis 数据获取失败：{e}")
+            # 聚合数据（暂不传入新闻项）
+            aggregated = aggregator.aggregate(news_items=None)
 
-        # 整合数据
-        market_insights = aggregate_market_data(
-            combined_report.get('sections', []),
-            openrouter_data,
-            aa_data
-        )
-    except Exception as e:
-        print(f"     [WARN] 市场数据整合失败，跳过该板块：{e}")
+            # 格式化为卡片
+            market_cards = formatter.format_for_html(aggregated)
+
+            # 转换为统一格式
+            for i, card in enumerate(market_cards):
+                market_insights.append({
+                    "idx": i + 1,
+                    "title": card["title"],
+                    "summary": card["content"],
+                    "link": "#",
+                    "source": card["source"],
+                    "pubDate": datetime.now(timezone.utc).isoformat()
+                })
+
+            print(f"     ✓ 市场数据：{len(market_insights)} 个指标卡片")
+
+        except Exception as e:
+            print(f"     [WARN] 市场数据采集失败，跳过该板块：{e}")
+            market_insights = []
+    else:
+        print("[1.5/4] 市场数据模块未安装，跳过")
 
     data = shape(combined_report, market_insights=market_insights)
     print(f"     成功：共 {data['meta']['total']} 条，版块 {[s['label'] for s in data['sections']]}")
