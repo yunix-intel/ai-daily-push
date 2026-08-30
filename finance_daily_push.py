@@ -744,7 +744,7 @@ def translate_page_url(original_url):
     # return "https://translate.google.com/translate?sl=auto&tl=zh-CN&u=" + urllib.parse.quote(original_url, safe="")
 
 
-def shape_finance(sections_domestic, sections_international, quotes, analysis_domestic, analysis_international, strategy, window_hours=24):
+def shape_finance(sections_domestic, sections_international, quotes, analysis_domestic, analysis_international, strategy, money_flow_data=None, window_hours=24):
     """整合国内和国际市场数据，返回完整数据结构。"""
     now_utc = datetime.now(timezone.utc)
 
@@ -804,6 +804,7 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
     return {
         "meta": meta,
         "quotes": quotes,
+        "moneyFlow": money_flow_data or {},
         "domestic": {
             "emergencyEvents": analysis_domestic.get("emergencyEvents") or [],
             "analysis": {
@@ -993,7 +994,7 @@ def main():
                      or os.environ.get("FINANCE_DASHBOARD_URL")
                      or cfg.get("finance_dashboard_url", "")).strip()
 
-    print("[1/5] 抓取指数行情 ...")
+    print("[1/6] 抓取指数行情 ...")
     try:
         quotes = fetch_quotes()
         for q in quotes:
@@ -1001,6 +1002,30 @@ def main():
     except Exception as exc:
         quotes = []
         print(f"     [!] 行情抓取失败，继续执行：{exc!r}")
+
+    print("[1.5/6] 抓取资金流向数据 ...")
+    money_flow_data = None
+    try:
+        from scrapers.money_flow_scraper import MoneyFlowScraper
+        scraper = MoneyFlowScraper()
+
+        north_flow = scraper.fetch_north_flow()
+        sector_flow = scraper.fetch_sector_flow(top_n=5)
+        stock_flow = scraper.fetch_stock_flow(top_n=10)
+
+        money_flow_data = {
+            "north_flow": north_flow,
+            "sector_flow": sector_flow,
+            "stock_flow": stock_flow
+        }
+
+        print(f"     北向资金合计：{north_flow.get('total_flow', 0):+.2f} 亿元")
+        if sector_flow and sector_flow.get('top_inflow'):
+            print(f"     行业流入 Top 1：{sector_flow['top_inflow'][0].get('name', 'N/A')}")
+        if stock_flow and stock_flow.get('top_inflow'):
+            print(f"     个股流入 Top 1：{stock_flow['top_inflow'][0].get('name', 'N/A')}")
+    except Exception as exc:
+        print(f"     [!] 资金流向抓取失败，继续执行：{exc!r}")
 
     print(f"[2/5] 抓取财经快讯（过去 {args.hours} 小时）...")
     items_grouped = fetch_finance_items(hours=args.hours)
@@ -1172,7 +1197,8 @@ def main():
         print("     跳过：上一步分析未生成")
 
     data = shape_finance(sections_domestic, sections_international, quotes,
-                        analysis_domestic, analysis_international, strategy, window_hours=args.hours)
+                        analysis_domestic, analysis_international, strategy,
+                        money_flow_data=money_flow_data, window_hours=args.hours)
 
     out_html = os.path.join(HERE, "finance_dashboard.html")
     open(out_html, "w", encoding="utf-8").write(build_finance_html(data))

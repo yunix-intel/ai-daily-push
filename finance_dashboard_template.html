@@ -169,6 +169,90 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   }
   main+=renderMarket(domestic,'domestic','🇨🇳 国内要闻');
   main+=renderMarket(international,'intl','🌍 国际要闻');
+
+  // 资金流向板块
+  const moneyFlow = DATA.moneyFlow || {};
+  if(moneyFlow.north_flow || moneyFlow.sector_flow || moneyFlow.stock_flow) {
+    main+='<div class="market-divider" id="money-flow-section"><h2>💰 资金流向</h2></div>';
+
+    // 北向资金
+    if(moneyFlow.north_flow && moneyFlow.north_flow.total_flow !== undefined) {
+      const nf = moneyFlow.north_flow;
+      const totalCls = nf.total_flow > 0 ? 'up' : (nf.total_flow < 0 ? 'down' : '');
+      const shCls = nf.sh_flow > 0 ? 'up' : (nf.sh_flow < 0 ? 'down' : '');
+      const szCls = nf.sz_flow > 0 ? 'up' : (nf.sz_flow < 0 ? 'down' : '');
+      main+='<div class="block"><h2>🔺 北向资金</h2>';
+      main+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">';
+      main+='<div style="background:var(--card);padding:15px;border-radius:8px;text-align:center">';
+      main+='<div style="color:var(--muted);font-size:13px;margin-bottom:6px">沪股通</div>';
+      main+='<div class="'+shCls+'" style="font-size:20px;font-weight:600">'+(nf.sh_flow>0?'+':'')+nf.sh_flow.toFixed(2)+' 亿</div>';
+      main+='</div>';
+      main+='<div style="background:var(--card);padding:15px;border-radius:8px;text-align:center">';
+      main+='<div style="color:var(--muted);font-size:13px;margin-bottom:6px">深股通</div>';
+      main+='<div class="'+szCls+'" style="font-size:20px;font-weight:600">'+(nf.sz_flow>0?'+':'')+nf.sz_flow.toFixed(2)+' 亿</div>';
+      main+='</div>';
+      main+='<div style="background:var(--card);padding:15px;border-radius:8px;text-align:center">';
+      main+='<div style="color:var(--muted);font-size:13px;margin-bottom:6px">合计</div>';
+      main+='<div class="'+totalCls+'" style="font-size:20px;font-weight:600">'+(nf.total_flow>0?'+':'')+nf.total_flow.toFixed(2)+' 亿</div>';
+      main+='</div>';
+      main+='</div></div>';
+    }
+
+    // 行业资金流向
+    if(moneyFlow.sector_flow && (moneyFlow.sector_flow.top_inflow || moneyFlow.sector_flow.top_outflow)) {
+      const sf = moneyFlow.sector_flow;
+      main+='<div class="block"><h2>🏭 行业资金流向</h2>';
+      if(sf.top_inflow && sf.top_inflow.length > 0) {
+        main+='<div class="sub-h">资金净流入 Top 5</div>';
+        main+='<div style="margin:10px 0"><table style="width:100%;border-collapse:collapse">';
+        main+='<thead><tr style="border-bottom:1px solid var(--border);color:var(--muted);font-size:13px"><th style="text-align:left;padding:8px">行业</th><th style="text-align:right;padding:8px">净流入</th><th style="text-align:right;padding:8px">涨跌幅</th></tr></thead><tbody>';
+        sf.top_inflow.forEach(item=>{
+          const flowCls = item.net_inflow > 0 ? 'up' : 'down';
+          const pctCls = item.change_pct > 0 ? 'up' : (item.change_pct < 0 ? 'down' : '');
+          main+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:10px">'+esc(item.name)+'</td>';
+          main+='<td class="'+flowCls+'" style="text-align:right;padding:10px;font-weight:600">'+(item.net_inflow>0?'+':'')+item.net_inflow.toFixed(2)+' 亿</td>';
+          main+='<td class="'+pctCls+'" style="text-align:right;padding:10px">'+(item.change_pct>0?'+':'')+item.change_pct.toFixed(2)+'%</td></tr>';
+        });
+        main+='</tbody></table></div>';
+      }
+      if(sf.top_outflow && sf.top_outflow.length > 0) {
+        main+='<div class="sub-h" style="margin-top:16px">资金净流出 Top 5</div>';
+        main+='<div style="margin:10px 0"><table style="width:100%;border-collapse:collapse">';
+        main+='<thead><tr style="border-bottom:1px solid var(--border);color:var(--muted);font-size:13px"><th style="text-align:left;padding:8px">行业</th><th style="text-align:right;padding:8px">净流入</th><th style="text-align:right;padding:8px">涨跌幅</th></tr></thead><tbody>';
+        sf.top_outflow.forEach(item=>{
+          const flowCls = item.net_inflow > 0 ? 'up' : 'down';
+          const pctCls = item.change_pct > 0 ? 'up' : (item.change_pct < 0 ? 'down' : '');
+          main+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:10px">'+esc(item.name)+'</td>';
+          main+='<td class="'+flowCls+'" style="text-align:right;padding:10px;font-weight:600">'+(item.net_inflow>0?'+':'')+item.net_inflow.toFixed(2)+' 亿</td>';
+          main+='<td class="'+pctCls+'" style="text-align:right;padding:10px">'+(item.change_pct>0?'+':'')+item.change_pct.toFixed(2)+'%</td></tr>';
+        });
+        main+='</tbody></table></div>';
+      }
+      main+='</div>';
+    }
+
+    // 个股资金流向
+    if(moneyFlow.stock_flow && (moneyFlow.stock_flow.top_inflow || moneyFlow.stock_flow.top_outflow)) {
+      const stf = moneyFlow.stock_flow;
+      main+='<div class="block"><h2>📊 个股资金流向</h2>';
+      if(stf.top_inflow && stf.top_inflow.length > 0) {
+        main+='<div class="sub-h">主力净流入 Top 10</div>';
+        main+='<div style="margin:10px 0"><table style="width:100%;border-collapse:collapse">';
+        main+='<thead><tr style="border-bottom:1px solid var(--border);color:var(--muted);font-size:13px"><th style="text-align:left;padding:8px">股票</th><th style="text-align:center;padding:8px">代码</th><th style="text-align:right;padding:8px">净流入</th><th style="text-align:right;padding:8px">涨跌幅</th></tr></thead><tbody>';
+        stf.top_inflow.forEach(item=>{
+          const flowCls = item.net_inflow > 0 ? 'up' : 'down';
+          const pctCls = item.change_pct > 0 ? 'up' : (item.change_pct < 0 ? 'down' : '');
+          main+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:10px">'+esc(item.name)+'</td>';
+          main+='<td style="text-align:center;padding:10px;color:var(--muted);font-size:12px">'+esc(item.code)+'</td>';
+          main+='<td class="'+flowCls+'" style="text-align:right;padding:10px;font-weight:600">'+(item.net_inflow>0?'+':'')+item.net_inflow.toFixed(2)+' 亿</td>';
+          main+='<td class="'+pctCls+'" style="text-align:right;padding:10px">'+(item.change_pct>0?'+':'')+item.change_pct.toFixed(2)+'%</td></tr>';
+        });
+        main+='</tbody></table></div>';
+      }
+      main+='</div>';
+    }
+  }
+
   document.getElementById('main').innerHTML=main;
   const sources='格隆汇、同花顺、金十数据、第一财经、财新网、Seeking Alpha、Bloomberg、CNBC';
   document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：'+sources+' · 行情：腾讯财经';
