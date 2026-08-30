@@ -926,7 +926,7 @@ def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-push", action="store_true")
-    ap.add_argument("--hours", type=int, default=24, help="收录窗口小时数，默认 24")
+    ap.add_argument("--hours", type=int, default=None, help="收录窗口小时数，默认根据交易日状态自动调整")
     ap.add_argument("--dashboard-url", default=None)
     args = ap.parse_args()
 
@@ -937,6 +937,28 @@ def main():
     dashboard_url = (args.dashboard_url
                      or os.environ.get("FINANCE_DASHBOARD_URL")
                      or cfg.get("finance_dashboard_url", "")).strip()
+
+    # 根据交易日状态自动调整数据收集时间范围
+    today = datetime.date.today()
+    trading_status = get_trading_status(today, market='A')
+
+    if args.hours is None:
+        # 自动判断收集时间范围
+        days_off = trading_status['days_since_last_trading']
+
+        if days_off >= 3:
+            # 节假日后首个交易日：收集整个假期期间（每天24小时）
+            args.hours = days_off * 24
+            print(f"[自动调整] 节后首日，扩展收集时间为 {args.hours} 小时（{days_off} 天假期）")
+        elif days_off == 2:
+            # 普通周末后的周一：收集72小时（周五+周六+周日）
+            args.hours = 72
+            print(f"[自动调整] 周末后首个交易日，扩展收集时间为 {args.hours} 小时")
+        else:
+            # 正常交易日：收集24小时
+            args.hours = 24
+    else:
+        print(f"[手动指定] 收集时间为 {args.hours} 小时")
 
     print("[1/6] 抓取指数行情 ...")
     try:
