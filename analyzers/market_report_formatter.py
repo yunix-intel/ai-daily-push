@@ -44,6 +44,11 @@ class MarketReportFormatter:
 
         return cards
 
+    def _format_for_html(self, text):
+        """将文本格式化为 HTML 友好格式（保留换行）"""
+        # 不需要转换，summary 字段会在 HTML 中使用 white-space: pre-wrap
+        return text
+
     def _format_news_metrics(self, news_metrics):
         """格式化新闻指标"""
         items = []
