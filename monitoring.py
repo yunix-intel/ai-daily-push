@@ -218,12 +218,23 @@ class MonitorMetrics:
             f.write(json.dumps(alert, ensure_ascii=False) + '\n')
 
     def _send_immediate_notification(self, alert: Dict):
-        """发送即时通知(企业微信/邮件/钉钉等)"""
-        # TODO: 集成企业微信机器人
-        # TODO: 集成邮件通知
-        # TODO: 集成钉钉机器人
-        print(f"[ALERT] {alert['level'].upper()}: {alert['title']}")
-        print(f"        {alert['message']}")
+        """发送即时通知(企业微信/钉钉/飞书/自定义webhook)"""
+        try:
+            from alerting import send_alert
+            send_alert(
+                level=alert['level'],
+                title=alert['title'],
+                message=alert['message'],
+                details={
+                    'timestamp': alert['timestamp'],
+                    'module': 'monitoring'
+                }
+            )
+        except Exception as e:
+            # 降级：至少打印到控制台
+            print(f"[ALERT] {alert['level'].upper()}: {alert['title']}")
+            print(f"        {alert['message']}")
+            print(f"        ⚠️ 推送失败: {e}")
 
     def export_metrics(self, filepath: str):
         """导出指标到文件(用于 Prometheus 等监控系统)"""
