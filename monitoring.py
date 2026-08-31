@@ -34,7 +34,7 @@
 
 配置：
     可通过环境变量配置：
-    - MONITOR_ENABLED: 是否启用监控（默认 true）
+    - MONITOR_ENABLED: 是否启用监控(默认 true)
     - ALERT_WEBHOOK: 告警 webhook URL
     - METRICS_EXPORT_PATH: 指标导出路径
 
@@ -220,7 +220,7 @@ class MonitorMetrics:
             f.write(json.dumps(alert, ensure_ascii=False) + '\n')
 
     def _send_immediate_notification(self, alert: Dict):
-        """发送即时通知（企业微信/邮件/钉钉等）"""
+        """发送即时通知(企业微信/邮件/钉钉等)"""
         # TODO: 集成企业微信机器人
         # TODO: 集成邮件通知
         # TODO: 集成钉钉机器人
@@ -228,7 +228,7 @@ class MonitorMetrics:
         print(f"        {alert['message']}")
 
     def export_metrics(self, filepath: str):
-        """导出指标到文件（用于 Prometheus 等监控系统）"""
+        """导出指标到文件(用于 Prometheus 等监控系统)"""
         data = {
             "timestamp": datetime.datetime.now().isoformat(),
             "metrics": self.metrics,
