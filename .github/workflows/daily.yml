@@ -86,13 +86,34 @@ jobs:
         if: always()
         run: python push_history_recorder.py --expected-time "00:00" --task "AI Daily Push"
 
+      # 推送历史只是记账，不该阻断发布。远端在本次运行期间被别的提交推进时
+      # （实测 08-31 定时运行就撞上了：跑到这一步时 main 已被本地连推三个提交），
+      # git push 会被拒，而这一步失败会连带跳过 Pages 产物准备与部署——
+      # 两份日报明明都生成成功了，当天页面却完全没更新。
+      # 所以：先 rebase 再推、重试三次；最终仍失败也只留 warning，不失败整个 job。
       - name: 提交推送历史
         if: always()
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add push_history.json push_history_report.html
-          git diff --quiet && git diff --staged --quiet || (git commit -m "📊 Update push history [skip ci]" && git push)
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "推送历史无变化，跳过提交"
+            exit 0
+          fi
+          git commit -m "📊 Update push history [skip ci]"
+          for i in 1 2 3; do
+            if git push; then
+              echo "推送历史已提交"
+              exit 0
+            fi
+            echo "第 $i 次推送被拒（远端已前进），rebase 后重试"
+            git pull --rebase origin "${GITHUB_REF_NAME}" || break
+            sleep 5
+          done
+          echo "::warning::推送历史提交失败，已跳过；不影响本次日报发布"
+          exit 0
 
       - name: 准备 Pages 静态产物（两个独立页面）
         run: |
