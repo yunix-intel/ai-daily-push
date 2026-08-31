@@ -9,6 +9,63 @@
 
 两个网页各自独立 URL，内容不混排。
 
+## 📦 安装
+
+### 前置要求
+
+- Python 3.8+
+- Git
+
+### 快速开始
+
+1. **克隆仓库**
+
+```bash
+git clone https://github.com/your-username/ai-daily-push.git
+cd ai-daily-push
+```
+
+2. **安装依赖**
+
+```bash
+pip install -r requirements.txt
+```
+
+3. **配置环境变量**
+
+创建 `push_config.json` 或设置环境变量：
+
+```json
+{
+  "wecom_webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY",
+  "dashboard_url": "https://your-username.github.io/ai-daily-push/",
+  "finance_dashboard_url": "https://your-username.github.io/ai-daily-push/finance.html",
+  "openai_api_key": "sk-...",
+  "openai_base_url": "https://api.openai.com/v1"
+}
+```
+
+或使用环境变量：
+
+```bash
+export WECOM_WEBHOOK="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY"
+export OPENAI_API_KEY="sk-..."
+```
+
+4. **本地测试运行**
+
+```bash
+# AI 日报（不推送，只生成 HTML）
+python ai_daily_push.py --no-push
+
+# 财经日报（不推送，只生成 HTML）
+python finance_daily_push.py --no-push
+```
+
+5. **查看生成的网页**
+
+打开 `ai_daily_dashboard.html` 和 `finance_dashboard.html` 查看效果。
+
 ## 工作原理
 
 - `ai_daily_push.py`：拉取 AI HOT 日报 + 4 个 AI 资讯 RSS → 英文条目译中文（保留原文）→ **[新增]** 采集市场数据（OpenRouter + Artificial Analysis）→ 生成 `ai_daily_dashboard.html`（6个板块）→ 推送图文卡片。
@@ -145,6 +202,49 @@ python ai_daily_push.py --no-push
 - 缓存文件示例：
   - `openrouter_2026-08-30.json`
   - `artificial_analysis_2026-08-30.json`
+
+---
+
+## 📋 数据隐私与安全
+
+### 数据收集
+本项目**不收集用户个人数据**。所有数据来源为公开的 RSS 源和公开 API：
+- AI 资讯来自公开的 RSS 订阅源
+- 财经数据来自公开的金融数据接口
+- 市场数据来自 OpenRouter 和 Artificial Analysis 公开 API
+
+### 敏感信息保护
+- 所有 API 密钥、Webhook 地址等敏感配置存储在：
+  - GitHub Secrets（推荐，用于 GitHub Actions）
+  - 本地 `push_config.json`（已在 .gitignore 中，不会提交到仓库）
+  - 环境变量
+- 日志系统自动脱敏 API Key，只记录前缀（如 `sk-1234...`）
+- 生成的 HTML 仪表盘不包含任何敏感信息
+
+### 数据传输
+- 推送到企业微信/飞书的消息仅包含公开的资讯摘要
+- 生成的 HTML 仪表盘部署到 GitHub Pages（公开）
+- 不存储用户行为数据或分析数据
+
+### 最佳实践
+1. ✅ 使用 GitHub Secrets 存储所有密钥
+2. ✅ 不要将 `push_config.json` 提交到公开仓库
+3. ✅ 定期轮换 API 密钥和 Webhook 地址
+4. ✅ 仅在受信任的环境中运行本程序
+
+---
+
+## 📄 许可证
+
+本项目采用 [MIT License](LICENSE) 开源许可证。
+
+---
+
+## 🙏 致谢
+
+- [AI HOT](https://hot.aitopstack.com/) - AI 资讯聚合
+- 各 RSS 源提供商
+- OpenAI、DeepSeek 等 LLM 服务商
 
 ---
 

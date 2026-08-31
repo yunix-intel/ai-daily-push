@@ -1,0 +1,32 @@
+# AI Daily Push 默认配置
+
+environment: production
+debug: false
+app_name: "AI Daily Push"
+version: "2.0.0"
+
+# 日志配置
+logging:
+  level: INFO
+  log_dir: logs
+  json_format: true
+
+# 数据源配置
+data_source:
+  ai_hot_enabled: true
+  rss_feeds_enabled: true
+  fetch_timeout: 30
+  max_retries: 3
+
+# 监控配置
+monitoring:
+  enabled: true
+  alert_channels:
+    - log
+  health_check_interval: 300
+
+# 调度配置
+schedule:
+  ai_daily_cron: "0 9 * * *"
+  finance_daily_cron: "30 8 * * 1-5"
+  timezone: "Asia/Shanghai"

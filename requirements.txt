@@ -1,16 +1,28 @@
-# AI Daily Push - Requirements
+# AI Daily Push - 依赖清单
+# 核心依赖（必需）
+requests>=2.31.0,<3.0.0
+python-dateutil>=2.8.2,<3.0.0
 
-# Core dependencies
-feedparser>=6.0.10
-beautifulsoup4>=4.12.0
-requests>=2.31.0
-python-dateutil>=2.8.2
+# 可选依赖
+# LLM 功能（如果使用 OpenAI API）
+openai>=1.0.0,<2.0.0
 
-# OpenAI API
-openai>=1.0.0
+# 市场数据采集（可选）
+# 如需市场数据功能，取消下面注释
+# beautifulsoup4>=4.12.0,<5.0.0
+# lxml>=4.9.0,<5.0.0
 
-# Optional: Browser automation (for dynamic scraping)
-# playwright>=1.40.0
+# 微信公众号发布（可选）
+# 如需公众号发布功能，取消下面注释
+# Pillow>=10.0.0,<11.0.0
 
-# Testing
-pytest>=7.4.0
+# 开发和测试依赖
+pytest>=7.4.0,<8.0.0
+pytest-cov>=4.1.0,<5.0.0
+
+# 代码质量
+flake8>=6.1.0,<7.0.0
+black>=23.0.0,<24.0.0
+
+# 类型检查
+mypy>=1.5.0,<2.0.0

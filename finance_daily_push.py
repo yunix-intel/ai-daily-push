@@ -28,6 +28,33 @@ import json, os, re, sys, urllib.parse, urllib.request, urllib.error
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 
+# 导入监控装饰器
+try:
+    from monitor_decorator import monitor_task
+    MONITORING_AVAILABLE = True
+except ImportError:
+    # 如果监控模块不可用，创建一个空装饰器
+    def monitor_task(name):
+        def decorator(func):
+            return func
+        return decorator
+    MONITORING_AVAILABLE = False
+
+# 导入监控和日志系统
+try:
+    from monitoring import get_monitor, AlertLevel
+    from logger import LoggerFactory
+    MONITORING_AVAILABLE = True
+    logger = LoggerFactory.get_logger("finance_daily_push")
+except ImportError:
+    MONITORING_AVAILABLE = False
+    import logging
+    logger = logging.getLogger("finance_daily_push")
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    logger.addHandler(handler)
+
 from ai_daily_push import (
     CST_OFFSET,
     HERE,
@@ -374,7 +401,8 @@ def _llm_config():
     cfg = {}
     if os.path.exists(cfg_path):
         try:
-            cfg = json.load(open(cfg_path, encoding="utf-8"))
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg = json.load(f)
         except Exception:
             cfg = {}
     api_key = (os.environ.get("OPENAI_API_KEY") or cfg.get("openai_api_key", "")).strip()
@@ -922,6 +950,7 @@ def push_feishu_markdown(webhook, title, body, tail, dashboard_url=None):
     return http_post_json(webhook, payload)
 
 # ----------------------------- 主流程 -----------------------------
+@monitor_task("finance_daily")
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -933,7 +962,8 @@ def main():
     cfg_path = os.path.join(HERE, "push_config.json")
     cfg = {}
     if os.path.exists(cfg_path):
-        cfg = json.load(open(cfg_path, encoding="utf-8"))
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
     dashboard_url = (args.dashboard_url
                      or os.environ.get("FINANCE_DASHBOARD_URL")
                      or cfg.get("finance_dashboard_url", "")).strip()
@@ -1192,7 +1222,8 @@ def main():
                         money_flow_data=money_flow_data, window_hours=args.hours)
 
     out_html = os.path.join(HERE, "finance_dashboard.html")
-    open(out_html, "w", encoding="utf-8").write(build_finance_html(data))
+    with open(out_html, "w", encoding="utf-8") as f:
+        f.write(build_finance_html(data))
     print(f"     已写入 {out_html}")
 
     body, tail = build_finance_markdown(data, dashboard_url)

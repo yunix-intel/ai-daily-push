@@ -30,6 +30,18 @@ import json, sys, os, re, html, time, urllib.parse, urllib.request, urllib.error
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
+# 导入监控装饰器
+try:
+    from monitor_decorator import monitor_task
+    MONITORING_AVAILABLE = True
+except ImportError:
+    # 如果监控模块不可用，创建一个空装饰器
+    def monitor_task(name):
+        def decorator(func):
+            return func
+        return decorator
+    MONITORING_AVAILABLE = False
+
 # 导入市场数据模块
 try:
     from analyzers.market_data_aggregator import MarketDataAggregator
@@ -920,6 +932,7 @@ def push_pushplus(token, markdown, title, api="https://www.pushplus.plus/send", 
         return json.loads(r.read().decode("utf-8"))
 
 # ----------------------------- 主流程 -----------------------------
+@monitor_task("ai_daily")
 def main():
     import argparse, os
     ap = argparse.ArgumentParser()
@@ -931,7 +944,8 @@ def main():
     cfg_path = os.path.join(HERE, "push_config.json")
     cfg = {}
     if os.path.exists(cfg_path):
-        cfg = json.load(open(cfg_path, encoding="utf-8"))
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
     # ---- 渠道配置：企业微信（默认）> pushplus（备选）----
     wecom = cfg.get("wecom", {}) or {}
     corpid = (os.environ.get("WECOM_CORPID") or wecom.get("corpid", "")).strip()
@@ -1027,7 +1041,8 @@ def main():
 
     print("[2/4] 生成 HTML 仪表盘 ...")
     out_html = os.path.join(HERE, "ai_daily_dashboard.html")
-    open(out_html, "w", encoding="utf-8").write(build_html(data))
+    with open(out_html, "w", encoding="utf-8") as f:
+        f.write(build_html(data))
     print(f"     已写入 {out_html}")
 
     print("[3/4] 渲染 Markdown 摘要 ...")

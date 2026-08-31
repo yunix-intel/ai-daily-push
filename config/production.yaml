@@ -1,0 +1,26 @@
+# 生产环境配置
+
+environment: production
+debug: false
+
+logging:
+  level: INFO
+
+llm:
+  provider: openai
+  model: gpt-4
+  api_key: ${LLM_API_KEY}
+  temperature: 0.7
+
+push:
+  # 生产环境使用企业微信
+  wecom_corpid: ${WECOM_CORPID}
+  wecom_corpsecret: ${WECOM_CORPSECRET}
+  wecom_agentid: ${WECOM_AGENTID}
+  wecom_touser: "@all"
+
+monitoring:
+  enabled: true
+  alert_channels:
+    - log
+    - wecom

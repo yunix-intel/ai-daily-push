@@ -1,4 +1,94 @@
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
 *.pyc
-.wechat_token_cache.json
+*.pyo
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv
+
+# 敏感配置文件
 push_config.json
+.env
+.env.local
+.env.*.local
+config.json
+secrets.json
+*.key
+*.pem
+*.crt
+
+# 缓存和临时文件
+.cache/
+*.cache
+.wechat_token_cache.json
+*.tmp
+*.temp
+*.bak
+
+# 日志文件
+logs/
+*.log
+*.log.*
+
+# 监控和指标
+metrics.json
+metrics/
+reports/
+
+# 数据文件
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 测试覆盖
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# GitHub Actions 生成的文件
+ai_daily_dashboard.html
+finance_dashboard.html
+
+# 封面图缓存
+covers/
+*.png
+*.jpg
+*.jpeg
+!static/*.png
+!static/*.jpg
+!static/*.jpeg

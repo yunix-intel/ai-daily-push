@@ -1,0 +1,50 @@
+name: Monitor Push Status
+
+# 监测主推送任务是否按时运行
+# 每天 08:15 运行（主任务应该 08:00 运行）
+# 如果主任务延迟超过 15 分钟，发送告警
+
+on:
+  schedule:
+    # 每天 08:15 北京时间（UTC 00:15）
+    - cron: '15 0 * * *'
+  workflow_dispatch:  # 支持手动触发
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Check main workflow status
+        run: |
+          python github_monitor.py \
+            --repo "${{ github.repository }}" \
+            --workflow "AI Daily Push" \
+            --check-delay \
+            --threshold 900
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_WECOM_WEBHOOK: ${{ secrets.ALERT_WECOM_WEBHOOK }}
+          ALERT_DINGTALK_WEBHOOK: ${{ secrets.ALERT_DINGTALK_WEBHOOK }}
+          ALERT_FEISHU_WEBHOOK: ${{ secrets.ALERT_FEISHU_WEBHOOK }}
+
+      - name: Monitor result
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "✅ 主任务运行正常"
+          else
+            echo "⚠️ 主任务可能存在问题"
+          fi
