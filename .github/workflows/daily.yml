@@ -6,7 +6,7 @@ on:
   workflow_dispatch:           # 允许在 Actions 页面手动触发测试
 
 permissions:
-  contents: read
+  contents: write  # 修改为 write 以便提交推送历史
   pages: write
   id-token: write
 
@@ -58,6 +58,18 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
         run: python finance_daily_push.py
 
+      - name: 记录推送时间
+        if: always()
+        run: python push_history_recorder.py --expected-time "00:00" --task "AI Daily Push"
+
+      - name: 提交推送历史
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add push_history.json push_history_report.html
+          git diff --quiet && git diff --staged --quiet || (git commit -m "📊 Update push history [skip ci]" && git push)
+
       - name: 准备 Pages 静态产物（两个独立页面）
         run: |
           mkdir -p public
@@ -67,6 +79,10 @@ jobs:
             cp finance_dashboard.html public/finance.html
           else
             echo "finance_dashboard.html 不存在，跳过财经页面发布"
+          fi
+          # 添加推送历史报告
+          if [ -f push_history_report.html ]; then
+            cp push_history_report.html public/push_history.html
           fi
 
       - name: 上传 Pages 产物
