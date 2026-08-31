@@ -84,6 +84,10 @@ htmlcov/
 ai_daily_dashboard.html
 finance_dashboard.html
 
+# 全文翻译缓存与中间产物（CI 里靠 actions/cache 恢复，不入库）
+translations/
+translated_*.html
+
 # 封面图缓存
 covers/
 *.png

@@ -6,7 +6,16 @@ LLM 翻译服务模块
 """
 
 import json
+import os
 import re
+
+# 翻译任务跟着翻译模型走，与 finance_daily_push / ai_daily_push 使用同一环境变量。
+TRANSLATE_MODEL_DEFAULT = "deepseek-v4-flash"
+
+
+def _translate_model():
+    """全文翻译使用的模型。"""
+    return (os.environ.get("OPENAI_MODEL_TRANSLATE") or TRANSLATE_MODEL_DEFAULT).strip()
 
 
 def translate_article_llm(article_text, call_llm_func, max_chars_per_batch=3000):
@@ -75,11 +84,12 @@ def _translate_batch(text, call_llm_func):
     user_prompt = f"翻译以下英文财经文章为简体中文，保持段落结构：\n\n{text}"
 
     try:
-        # 使用 gpt-4o-mini（快速且便宜）
+        # 翻译走翻译模型（deepseek-v4-flash 量大且便宜），不写死模型名：
+        # 硬编码的模型在自建网关上不存在会直接 503，让全文翻译整体失效。
         result = call_llm_func(
             system_prompt,
             user_prompt,
-            model='gpt-4o-mini',
+            model=_translate_model(),
             retries=2
         )
 

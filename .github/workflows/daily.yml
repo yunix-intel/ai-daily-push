@@ -31,6 +31,28 @@ jobs:
           find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
           find . -type f -name "*.pyc" -delete 2>/dev/null || true
 
+      # 趋势分析要跟历史快照对比（data/market_data 下的按日 JSON）。
+      # 这个目录被 .gitignore 排除，CI 每次都是干净检出，不缓存的话
+      # 「趋势分析 / 模型分布变化」永远只能报「无足够历史数据」。
+      # restore-keys 让今天的运行能命中最近一次的缓存。
+      - name: 恢复市场数据历史快照
+        uses: actions/cache@v4
+        with:
+          path: data/market_data
+          key: market-data-${{ github.run_id }}
+          restore-keys: |
+            market-data-
+
+      # 全文翻译缓存（7 天有效）。同样被 gitignore 排除，不缓存的话
+      # 每天都要把同一批文章重新抓一遍、重新过一遍 LLM。
+      - name: 恢复全文翻译缓存
+        uses: actions/cache@v4
+        with:
+          path: translations
+          key: translations-${{ github.run_id }}
+          restore-keys: |
+            translations-
+
       - name: 第一条：AI 日报（图文卡片 + AI 日报网页）
         env:
           WECOM_CORPID: ${{ secrets.WECOM_CORPID }}
@@ -44,10 +66,10 @@ jobs:
           WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
+          OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
         run: python ai_daily_push.py
 
-      # 第二条独立于第一条：财经日报失败（数据源/LLM 异常）不应该让已经成功的
-      # AI 日报连带标红，所以用 continue-on-error 兜住。
       - name: 第二条：财经日报（markdown + 财经网页）
         continue-on-error: true
         env:
@@ -56,6 +78,8 @@ jobs:
           FINANCE_DASHBOARD_URL: ${{ secrets.FINANCE_DASHBOARD_URL }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
+          OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
         run: python finance_daily_push.py
 
       - name: 记录推送时间

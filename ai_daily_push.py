@@ -159,7 +159,12 @@ DEFAULT_SECTION = "其他资讯"  # 未命中任何规则的兜底分类
 
 
 def classify_ai_items(items):
-    """智能分类：按关键词匹配将条目分到对应板块。
+    """智能分类：按关键词加权打分将条目分到对应板块。
+
+    不用「命中即停」：SECTION_RULES 里的词非常宽（「模型」「市场」「使用」都在列），
+    先命中哪条全看规则书写顺序，一条讲财报的新闻只要捎带一句「发布」
+    就会被前面的规则截走。改成打分——标题命中权重高于摘要，取分最高的板块，
+    同分时按 SECTION_RULES 的先后顺序决定，保留原有的优先级意图。
 
     items: AI HOT + RSS 聚合后的所有条目（扁平列表）
     返回：按新分类规则组织的 sections
@@ -168,17 +173,23 @@ def classify_ai_items(items):
     buckets[DEFAULT_SECTION] = []
 
     for item in items:
-        text = f"{item.get('title', '')} {item.get('summary', '')} {item.get('originalTitle', '')}".lower()
-        placed = False
+        title = f"{item.get('title', '')} {item.get('originalTitle', '')}".lower()
+        summary = str(item.get('summary', '')).lower()
 
+        best_label, best_score = None, 0
         for label, keywords in SECTION_RULES:
-            if any(kw.lower() in text for kw in keywords):
-                buckets[label].append(item)
-                placed = True
-                break
+            score = 0
+            for kw in keywords:
+                kw = kw.lower()
+                if kw in title:
+                    score += 3
+                elif kw in summary:
+                    score += 1
+            # 严格大于：同分时先定义的规则胜出
+            if score > best_score:
+                best_label, best_score = label, score
 
-        if not placed:
-            buckets[DEFAULT_SECTION].append(item)
+        buckets[best_label if best_label else DEFAULT_SECTION].append(item)
 
     # 只返回非空板块，按定义顺序排列
     result = []
@@ -308,44 +319,245 @@ def translate_text(text, target="zh-CN", retries=3, terms=None):
     raise last_exc
 
 
+# --------------------------- LLM 翻译（OpenAI 兼容） ---------------------------
+# MyMemory 是免费接口、按 IP 限流，逐条翻译 36 条要发 72 次请求，必然 429。
+# 配置了自建网关就走网关批量翻译：一次请求 10 条，请求数降两个数量级；
+# 没配 key 时仍回退到 MyMemory，保持无配置也能跑。
+AI_MODEL_TRANSLATE_DEFAULT = "deepseek-v4-flash"
+
+AI_TRANSLATE_SYSTEM = (
+    "你是专业的科技/AI 领域翻译。把用户给出的英文标题和摘要翻译成简体中文，"
+    "术语准确，公司名与产品名保留通用译名或英文原文"
+    "（如 OpenAI、Anthropic、Claude、ChatGPT 保持原文）。"
+    "不要增删信息，不要加评论。严格按要求的 JSON 结构输出，不要输出多余文字。"
+)
+
+
+_BASE_URL_WARNED = False
+
+
+def _warn_if_default_base_url(base_url, api_key):
+    """没配 OPENAI_BASE_URL 时大声报警，不要静默走 api.openai.com。
+
+    默认模型名（deepseek-v4-flash）只挂在自建网关上，官方 OpenAI 没有这个模型，
+    退回官方地址不可能成功，只会把自建网关的 key 发给第三方，然后收到一句
+    含义模糊的 401。之前排查「翻译全批失败」时就被这个静默回退误导过。
+    """
+    global _BASE_URL_WARNED
+    if _BASE_URL_WARNED or not api_key:
+        return
+    if base_url == "https://api.openai.com/v1":
+        _BASE_URL_WARNED = True
+        print("  [WARN] 未设置 OPENAI_BASE_URL，将请求官方 api.openai.com。")
+        print("         若 key 属于自建网关，请求会以 401 失败，且 key 已发往第三方。")
+        print("         请设置 OPENAI_BASE_URL 或在 push_config.json 填 openai_base_url。")
+
+
+def _ai_llm_config():
+    """读取 LLM 配置。与财经日报共用同一组环境变量。"""
+    cfg_path = os.path.join(HERE, "push_config.json")
+    cfg = {}
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = {}
+    api_key = (os.environ.get("OPENAI_API_KEY") or cfg.get("openai_api_key", "")).strip()
+    base_url = (os.environ.get("OPENAI_BASE_URL") or cfg.get("openai_base_url", "")
+                or "https://api.openai.com/v1").strip().rstrip("/")
+    model = (os.environ.get("OPENAI_MODEL_TRANSLATE")
+             or cfg.get("openai_model_translate", "") or AI_MODEL_TRANSLATE_DEFAULT).strip()
+    _warn_if_default_base_url(base_url, api_key)
+    return api_key, base_url, model
+
+
+def call_ai_llm_json(system_prompt, user_prompt, retries=1, timeout=240):
+    """调用 OpenAI 兼容接口并解析 JSON 对象。失败抛异常，由调用方降级。
+
+    timeout 给到 240s：实测网关翻一批 10 条要 80~160s，波动很大，
+    卡 120s 会把本来能成功的批次判成超时。
+    """
+    api_key, base_url, model = _ai_llm_config()
+    if not api_key:
+        raise RuntimeError("未配置 OPENAI_API_KEY")
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.3,
+        "response_format": {"type": "json_object"},
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/chat/completions",
+                data=data,
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            content = body["choices"][0]["message"]["content"]
+            # 有些网关会把 JSON 包在 ```json fence 里，剥掉再解析。
+            content = re.sub(r"^\s*```(?:json)?|```\s*$", "", content.strip())
+            return json.loads(content)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries:
+                # 504/429 是网关瞬时压力，退避后再试比立刻重撞成功率高。
+                time.sleep(3 * (attempt + 1))
+                continue
+    raise last_exc
+
+
+def translate_batch_llm_ai(pairs, batch_size=10):
+    """批量翻译：pairs 为 [(key, title, summary)]，返回 {key: (title_zh, summary_zh)}。
+
+    单批失败只影响该批，其余批次照常；调用方对漏掉的条目再走逐条回退。
+    """
+    result = {}
+    total_batches = (len(pairs) + batch_size - 1) // batch_size
+    for start in range(0, len(pairs), batch_size):
+        batch = pairs[start:start + batch_size]
+        batch_num = start // batch_size + 1
+        listing = [
+            json.dumps({"id": key, "title": title, "summary": (summary or "")[:300]},
+                       ensure_ascii=False)
+            for key, title, summary in batch
+        ]
+        user_prompt = (
+            "把下面每条英文资讯的 title 和 summary 翻译成简体中文。\n"
+            "输入（每行一个 JSON 对象）：\n" + "\n".join(listing) + "\n\n"
+            '输出 JSON：{"items":[{"id":原样返回的id,"title":"中文标题","summary":"中文摘要"}]}\n'
+            "summary 为空则中文 summary 也返回空字符串。必须覆盖全部输入条目。"
+        )
+        try:
+            data = call_ai_llm_json(AI_TRANSLATE_SYSTEM, user_prompt)
+            rows = data.get("items") or []
+            for row in rows:
+                rid = row.get("id")
+                if isinstance(rid, str) and rid.isdigit():
+                    rid = int(rid)
+                if rid is None:
+                    continue
+                result[rid] = ((row.get("title") or "").strip(),
+                               (row.get("summary") or "").strip())
+            print(f"     批次 {batch_num}/{total_batches}：{len(rows)}/{len(batch)} 条翻译成功")
+        except Exception as exc:
+            print(f"     批次 {batch_num}/{total_batches} 失败（该批保留英文）：{exc!r}")
+    return result
+
+
+def _needs_translation(text):
+    """含拉丁字母且不含中文才需要翻译。"""
+    s = (text or "").strip()
+    if not s or not re.search(r"[A-Za-z]", s):
+        return False
+    return not any('一' <= c <= '鿿' for c in s)
+
+
 def translate_items(report, give_up_after=6):
     """英文条目译中文并保留原文；失败回退原文，不中断整体流程。
 
-    连续 give_up_after 条都失败就放弃剩余翻译：MyMemory 按 IP 限流，被限流后
-    每条都要重试到超时（实测单条约 17s），几十条能拖十几分钟。保留原文即可，
-    网页和推送本来就同时展示原文。
+    优先走自建网关批量翻译（一次 10 条），配置缺失或整体失败时才逐条走 MyMemory。
+    MyMemory 是免费接口、按 IP 限流：逐条翻 36 条要发 72 次请求，实测必被 429，
+    且被限流后每条都要重试到超时（约 17s），几十条能拖十几分钟。
     """
+    all_items = [item for section in report.get("sections", [])
+                 for item in section.get("items", [])]
+    for item in all_items:
+        item["originalTitle"] = item.get("title", "")
+        item["originalSummary"] = item.get("summary", "")
+
+    pending = [i for i, item in enumerate(all_items)
+               if _needs_translation(item.get("title")) or _needs_translation(item.get("summary"))]
+    if not pending:
+        print("     无需翻译的英文条目")
+        return report
+
+    api_key, _base_url, model = _ai_llm_config()
+    if api_key:
+        print(f"     检测到 {len(pending)} 条英文条目，用 {model} 批量翻译 ...")
+        pairs = [(i, all_items[i].get("title", ""), all_items[i].get("summary", ""))
+                 for i in pending]
+        mapping = translate_batch_llm_ai(pairs)
+        done = 0
+        for i, (title_zh, summary_zh) in mapping.items():
+            if i not in pending:
+                continue
+            item = all_items[i]
+            if title_zh:
+                item["title"] = title_zh
+            if summary_zh:
+                item["summary"] = summary_zh
+            if title_zh or summary_zh:
+                done += 1
+        leftover = [i for i in pending
+                    if _needs_translation(all_items[i].get("title"))
+                    or _needs_translation(all_items[i].get("summary"))]
+        if leftover:
+            print(f"     仍有 {len(leftover)} 条未翻译，补翻一轮 ...")
+            retry_pairs = [(i, all_items[i].get("title", ""), all_items[i].get("summary", ""))
+                           for i in leftover]
+            for i, (title_zh, summary_zh) in translate_batch_llm_ai(retry_pairs, batch_size=5).items():
+                item = all_items[i]
+                if title_zh:
+                    item["title"] = title_zh
+                if summary_zh:
+                    item["summary"] = summary_zh
+                done += 1
+        print(f"     LLM 翻译完成：{done}/{len(pending)} 条")
+        # 补翻之后仍是英文的条目，交给免费接口兜底。
+        # 之前只要 done>0 就直接 return，网关部分 504 时
+        # （例如 21/31 成功）剩下的 10 条会原样以英文出现在页面上。
+        still_en = [i for i in pending
+                    if _needs_translation(all_items[i].get("title"))
+                    or _needs_translation(all_items[i].get("summary"))]
+        if not still_en:
+            return report
+        if done:
+            print(f"     [!] 仍有 {len(still_en)} 条为英文，改用免费接口兜底")
+            pending = still_en
+        else:
+            # 网关整体不可用（key 失效/网关下线）才整批落到免费接口
+            print("     [!] LLM 翻译全部失败，回退免费接口逐条翻译")
+
     translated, failed, consecutive_fail = 0, 0, 0
     gave_up = False
-    for section in report.get("sections", []):
-        for item in section.get("items", []):
-            item["originalTitle"] = item.get("title", "")
-            item["originalSummary"] = item.get("summary", "")
-            if gave_up:
-                continue
-            ok = True
-            try:
-                item["title"] = translate_text(item["title"])
-                time.sleep(1.2)
-            except Exception as exc:
-                ok = False
-                print(f"     标题翻译失败，保留英文原文：{exc}")
-            try:
-                item["summary"] = translate_text(item["summary"])
-                time.sleep(1.2)
-            except Exception as exc:
-                ok = False
-                print(f"     摘要翻译失败，保留英文原文：{exc}")
-            if ok:
-                translated += 1
-                consecutive_fail = 0
-            else:
-                failed += 1
-                consecutive_fail += 1
-                if consecutive_fail >= give_up_after:
-                    gave_up = True
-                    print(f"     [!] 连续 {consecutive_fail} 条翻译失败（疑似接口限流），"
-                          f"放弃剩余翻译，全部保留英文原文。")
+    for i in pending:
+        item = all_items[i]
+        if gave_up:
+            continue
+        ok = True
+        try:
+            item["title"] = translate_text(item["title"])
+            time.sleep(1.2)
+        except Exception as exc:
+            ok = False
+            print(f"     标题翻译失败，保留英文原文：{exc}")
+        try:
+            item["summary"] = translate_text(item["summary"])
+            time.sleep(1.2)
+        except Exception as exc:
+            ok = False
+            print(f"     摘要翻译失败，保留英文原文：{exc}")
+        if ok:
+            translated += 1
+            consecutive_fail = 0
+        else:
+            failed += 1
+            consecutive_fail += 1
+            if consecutive_fail >= give_up_after:
+                gave_up = True
+                print(f"     [!] 连续 {consecutive_fail} 条翻译失败（疑似接口限流），"
+                      f"放弃剩余翻译，全部保留英文原文。")
     print(f"     翻译完成：{translated} 条，失败：{failed} 条" + ("（已提前放弃）" if gave_up else ""))
     return report
 
@@ -422,6 +634,14 @@ def pick_highlights(flat_items, top_n=5):
     return selected
 
 # ----------------------------- 数据整形 -----------------------------
+# 全文翻译每条要抓一次原文网页 + 过一次 LLM，见 shape() 里的预算控制。
+MAX_PAGE_TRANSLATIONS = 5
+
+# 同域名两次抓取的最小间隔（秒），按域名分别计时。
+PAGE_FETCH_INTERVAL = 5.0
+_LAST_FETCH_AT = {}
+
+
 def translate_page_with_llm(original_url, title):
     """使用DeepSeek API翻译网页全文
 
@@ -432,8 +652,24 @@ def translate_page_with_llm(original_url, title):
         from bs4 import BeautifulSoup
 
         # 1. 抓取原文网页
+        # 同一域名连着抓会被限流（VentureBeat 实测第 3 条起就 429）。
+        # 记录上次抓该域名的时间，不足间隔就先等一会儿。
+        host = urllib.parse.urlparse(original_url).netloc
+        last = _LAST_FETCH_AT.get(host)
+        if last is not None:
+            wait = PAGE_FETCH_INTERVAL - (time.monotonic() - last)
+            if wait > 0:
+                time.sleep(wait)
+        _LAST_FETCH_AT[host] = time.monotonic()
+
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            # 必须是完整的浏览器 UA。截断成 "...AppleWebKit/537.36" 少了
+            # Chrome/Safari 后缀，是典型的爬虫特征，VentureBeat 会直接回 429。
+            'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                           'AppleWebKit/537.36 (KHTML, like Gecko) '
+                           'Chrome/120.0.0.0 Safari/537.36'),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
         }
         response = requests.get(original_url, headers=headers, timeout=30)
         response.raise_for_status()
@@ -484,6 +720,8 @@ def translate_page_with_llm(original_url, title):
 
         api_key = os.environ.get("OPENAI_API_KEY", "")
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        if not api_key:
+            return None
 
         response = requests.post(
             f"{base_url}/chat/completions",
@@ -492,7 +730,9 @@ def translate_page_with_llm(original_url, title):
                 "Content-Type": "application/json"
             },
             json={
-                "model": "deepseek-chat",  # 使用DeepSeek模型
+                # 不能写死模型名：自建网关只挂了自己那几个模型，
+                # 硬编码 deepseek-chat 在网关上不存在，必然报错。
+                "model": _ai_llm_config()[2],
                 "messages": [
                     {"role": "system", "content": "你是一个专业的英译中翻译助手。"},
                     {"role": "user", "content": prompt}
@@ -500,7 +740,9 @@ def translate_page_with_llm(original_url, title):
                 "temperature": 0.3,
                 "max_tokens": 4000
             },
-            timeout=60
+            # 全文翻译输入几千字符、输出四千 token，实测网关要 80~160s。
+            # 卡 60s 基本每篇都超时，「查看中文全文」永远出不来。
+            timeout=240
         )
 
         if response.status_code == 200:
@@ -681,9 +923,61 @@ def create_market_insights_section(market_insights):
     }
 
 
+def _format_trend_cards(trends, start_idx=1):
+    """把 TrendAnalyzer 的结果转成统一的卡片格式。
+
+    两类内容：价格变动（成本变化）和榜单进出/名次移动（模型分布变化）。
+    价格只保留变动最大的 5 条：全量输出会把十几条同质条目铺满页面，看不出重点。
+    """
+    cards = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _add(title, summary, source):
+        cards.append({
+            "idx": start_idx + len(cards),
+            "title": title,
+            "summary": summary,
+            "link": "#",
+            "source": source,
+            "pubDate": now_iso,
+        })
+
+    price_trends = trends.get("price_trends") or []
+    ranked = sorted(price_trends, key=lambda t: abs(t.get("change_percent", 0)), reverse=True)[:5]
+    for t in ranked:
+        pct = t.get("change_percent", 0)
+        arrow = "📈 上调" if pct > 0 else "📉 下调"
+        _add(f"{arrow} {t.get('model', '')} 价格{abs(pct):.1f}%",
+             f"对比 {t.get('from_date', '')}："
+             f"${t.get('old_price', 0):.4f} → ${t.get('new_price', 0):.4f} / 1M tokens",
+             "OpenRouter 历史对比")
+
+    rt = trends.get("ranking_trends") or {}
+    if isinstance(rt, dict):
+        base = rt.get("compared_with") or "上一快照"
+        if rt.get("entered"):
+            _add(f"🆕 新进榜 {len(rt['entered'])} 个模型",
+                 "、".join(rt["entered"][:6]) + f"（对比 {base}）", "OpenRouter 榜单变化")
+        if rt.get("exited"):
+            _add(f"⬇️ 掉出榜单 {len(rt['exited'])} 个模型",
+                 "、".join(rt["exited"][:6]) + f"（对比 {base}）", "OpenRouter 榜单变化")
+        for m in (rt.get("moved") or [])[:3]:
+            delta = m.get("delta", 0)
+            _add(f"{'⬆️' if delta > 0 else '⬇️'} {m.get('model', '')} 排名"
+                 f"{'上升' if delta > 0 else '下降'} {abs(delta)} 位",
+                 f"第 {m.get('from_rank')} 名 → 第 {m.get('to_rank')} 名（对比 {base}）",
+                 "OpenRouter 榜单变化")
+
+    return cards
+
+
 def shape(report, market_insights=None, news_metrics=None):
     sections, gi = [], 0
     flat_for_ranking = []
+    # 全文翻译要抓原文网页，几十条顺序抓同一批域名会被 429 限流
+    # （VentureBeat 实测第 6 条起就开始拒），且每条都要过一次 LLM。
+    # 只给靠前的若干条做，够用且不会把整轮跑成限流风暴。
+    page_translate_budget = MAX_PAGE_TRANSLATIONS
 
     for s in report.get("sections", []):
         label = s.get("label", "")
@@ -701,9 +995,10 @@ def shape(report, market_insights=None, news_metrics=None):
                 bool(re.search(r'[a-zA-Z]{3,}', original_title))  # 包含3个以上连续英文字母
             )
 
-            # 生成翻译页面（使用DeepSeek API）
+            # 生成翻译页面（走配置的 LLM 网关）
             translated_page = ""
-            if needs_translation and original_link.startswith("http"):
+            if needs_translation and original_link.startswith("http") and page_translate_budget > 0:
+                page_translate_budget -= 1
                 try:
                     translated_file = translate_page_with_llm(original_link, title)
                     if translated_file:
@@ -742,7 +1037,10 @@ def shape(report, market_insights=None, news_metrics=None):
                 "aihot": "",
                 "translatedPage": "",
             })
-        sections.append({"label": "📊 行业数据洞察", "items": market_items})
+        # 顶部的「📊 行业数据洞察」分隔条渲染的是 newsMetrics（ARR/Token/定价等），
+        # 这里是另一批数据（OpenRouter 榜单、价格趋势）。两处同名会让人以为
+        # 页面重复了一块，改成区分得开的名字。
+        sections.append({"label": "📈 市场数据与趋势", "items": market_items})
 
     meta = {
         "date": report.get("date", ""),
@@ -973,6 +1271,22 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
         const name=esc(m.metric_name||'');
         const val=m.value||0;
         const valStr=(val*100).toFixed(1)+'%';
+        const ctx=m.context?'（'+esc(m.context)+'）':'';
+        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+'</li>';
+      });
+      main+='</ul></div>';
+    }
+    // 定价 / 成本变化
+    // news_metrics_extractor 一直在抽「定价」这一类，但之前没有对应渲染块，
+    // 抽到的数据直接被丢掉，页面上看不到成本/价格变化。
+    if(newsMetrics.定价&&newsMetrics.定价.length>0){
+      main+='<div class="block"><h2>💵 定价 / 成本变化</h2><ul style="list-style:none;padding:0">';
+      newsMetrics.定价.forEach(m=>{
+        const company=esc(m.company||'');
+        const name=esc(m.metric_name||'');
+        const val=m.value||0;
+        const unit=esc(m.unit||'');
+        const valStr=(typeof val==='number'?val.toLocaleString('en-US'):esc(String(val)))+(unit?' '+unit:'');
         const ctx=m.context?'（'+esc(m.context)+'）':'';
         main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+'</li>';
       });
@@ -1234,6 +1548,19 @@ def main():
                 })
 
             print(f"     ✓ 市场数据：{len(market_insights)} 个指标卡片")
+
+            # 趋势分析：拿今天的聚合结果和 data/market_data 里的历史快照对比。
+            # analyzers 里一直有 TrendAnalyzer，但从没接进主流程，
+            # 「趋势分析 / 模型分布变化」在页面上始终是空的。
+            try:
+                from analyzers.trend_analyzer import TrendAnalyzer
+                trends = TrendAnalyzer().analyze_trends(aggregated, days_back=7)
+                trend_cards = _format_trend_cards(trends, start_idx=len(market_insights) + 1)
+                market_insights.extend(trend_cards)
+                print(f"     ✓ 趋势分析：{len(trend_cards)} 条"
+                      + (f"（{trends.get('note')}）" if trends.get('note') else ""))
+            except Exception as e:
+                print(f"     [WARN] 趋势分析失败，跳过：{e}")
 
         except Exception as e:
             print(f"     [WARN] 市场数据采集失败，跳过该板块：{e}")

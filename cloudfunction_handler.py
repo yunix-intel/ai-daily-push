@@ -26,7 +26,9 @@
 - GITHUB_REPOSITORY: 仓库名（必需，如 owner/repo）
 - GITHUB_TOKEN: GitHub Token（可选）
 - GITHUB_WORKFLOW: Workflow 名称（可选）
-- EXPECTED_RUN_TIME: 预期运行时间（默认 08:00）
+- EXPECTED_RUN_TIME: 预期运行时间，**UTC 时间**（默认 00:00，对应本项目
+  workflow 的 cron '0 0 * * *' = 北京时间 08:00）。填成北京时间 08:00 会让
+  delay_seconds 恒为负，延迟告警永不触发。
 - DELAY_THRESHOLD: 延迟阈值秒数（默认 600）
 - ALERT_WECOM_WEBHOOK: 企业微信 Webhook
 - ALERT_DINGTALK_WEBHOOK: 钉钉 Webhook
@@ -68,7 +70,7 @@ def main_handler(event, context):
         repo = os.environ.get('GITHUB_REPOSITORY', '')
         token = os.environ.get('GITHUB_TOKEN', '')
         workflow = os.environ.get('GITHUB_WORKFLOW', '')
-        expected_time_str = os.environ.get('EXPECTED_RUN_TIME', '08:00')
+        expected_time_str = os.environ.get('EXPECTED_RUN_TIME', '00:00')
         threshold = int(os.environ.get('DELAY_THRESHOLD', 600))
 
         if not repo:
@@ -119,6 +121,18 @@ def main_handler(event, context):
         created_at = latest_run.get('created_at', '')
         run_started_at = latest_run.get('run_started_at', '')
         conclusion = latest_run.get('conclusion', '')
+        status = latest_run.get('status', '')
+
+        # 还在跑的运行没有 conclusion（是 None/空），拿它跟 "success" 比
+        # 会判定成「运行失败」，每天定时器早于 workflow 结束时都会误报。
+        if status in ("queued", "in_progress", "waiting", "requested", "pending"):
+            msg = f"运行 #{latest_run.get('run_number')} 仍在进行中（{status}），跳过本次判定"
+            print(f"⏳ {msg}")
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'status': 'running', 'message': msg},
+                                   ensure_ascii=False)
+            }
 
         if created_at and run_started_at:
             created_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
@@ -133,6 +147,14 @@ def main_handler(event, context):
 
             # 计算延迟
             delay_seconds = (started_time - expected_time).total_seconds()
+
+            # 负延迟 = 跑在预期时间之前（多半是手动触发，或 EXPECTED_RUN_TIME
+            # 填成了北京时间）。这种情况不该按「提前」处理，夹到 0，
+            # 否则日志里会出现 -11482 秒这种没意义的数字。
+            if delay_seconds < 0:
+                print(f"  [i] 实际启动早于预期时间 {abs(delay_seconds):.0f} 秒"
+                      f"（手动触发，或 EXPECTED_RUN_TIME={expected_time_str} 未按 UTC 填写）")
+                delay_seconds = 0
 
             print(f"最近运行:")
             print(f"  运行编号: {latest_run.get('run_number')}")
@@ -194,6 +216,19 @@ def main_handler(event, context):
                     'conclusion': conclusion
                 }, ensure_ascii=False)
             }
+
+        # created_at / run_started_at 缺失时原来会直接落到函数末尾返回 None。
+        # 阿里云 FC 对 None 返回值会报调用错误（函数被判定为执行异常），
+        # 而且这条路径什么都没告警，等于静默失灵。
+        msg = (f"运行 #{latest_run.get('run_number')} 缺少时间字段"
+               f"（created_at={created_at!r}, run_started_at={run_started_at!r}），"
+               f"无法计算延迟")
+        print(f"⚠️  {msg}")
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'status': 'warning', 'message': msg,
+                                'conclusion': conclusion}, ensure_ascii=False)
+        }
 
     except Exception as e:
         error_msg = f"监测失败: {str(e)}"

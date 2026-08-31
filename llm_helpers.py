@@ -6,30 +6,55 @@ LLM 辅助函数 - 统一的 LLM 调用接口
 import json
 import os
 import re
+import time
 import urllib.request
 
 
+_BASE_URL_WARNED = False
+
+
 def _llm_config():
-    """读取 LLM 配置"""
+    """读取 LLM 配置。
+
+    环境变量优先于配置文件：生产环境（GitHub Actions）只发环境变量，
+    push_config.json 里这几项是空字符串。之前用 cfg.get(key, default)，
+    空字符串是「存在的值」，default 不会生效，base_url 变成 ""，
+    拼出来的请求地址就是 "/chat/completions"，报 unknown url type。
+    模型名同理，不能写死 gpt-4o —— 自建网关没挂这个模型。
+    """
     here = os.path.dirname(os.path.abspath(__file__))
     cfg_path = os.path.join(here, "push_config.json")
 
-    if not os.path.exists(cfg_path):
+    cfg = {}
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception as e:
+            print(f"  [WARN] LLM 配置读取失败：{e}")
+
+    api_key = (os.getenv("OPENAI_API_KEY") or cfg.get("openai_api_key") or "").strip()
+    base_url = ((os.getenv("OPENAI_BASE_URL") or cfg.get("openai_base_url") or
+                 "https://api.openai.com/v1").strip().rstrip("/"))
+    translate_model = (os.getenv("OPENAI_MODEL_TRANSLATE")
+                       or cfg.get("openai_model_translate")
+                       or cfg.get("translate_model") or "deepseek-v4-flash").strip()
+    analysis_model = (os.getenv("OPENAI_MODEL_ANALYSIS")
+                      or cfg.get("openai_model_analysis")
+                      or cfg.get("analysis_model") or "gpt-5.6-sol").strip()
+
+    if not api_key:
         return None, None, None, None
 
-    try:
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
+    # 没配 OPENAI_BASE_URL 时不要静默走官方地址：默认模型名只挂在自建网关上，
+    # 官方 OpenAI 没有这些模型，请求必然 401，还会把自建网关的 key 发给第三方。
+    global _BASE_URL_WARNED
+    if not _BASE_URL_WARNED and base_url == "https://api.openai.com/v1":
+        _BASE_URL_WARNED = True
+        print("  [WARN] 未设置 OPENAI_BASE_URL，将请求官方 api.openai.com。")
+        print("         若 key 属于自建网关，请求会以 401 失败，且 key 已发往第三方。")
 
-        api_key = cfg.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
-        base_url = cfg.get("openai_base_url", "https://api.openai.com/v1")
-        translate_model = cfg.get("translate_model", "deepseek-v4-flash")
-        analysis_model = cfg.get("analysis_model", "gpt-4o")
-
-        return api_key, base_url, translate_model, analysis_model
-    except Exception as e:
-        print(f"  [WARN] LLM 配置读取失败：{e}")
-        return None, None, None, None
+    return api_key, base_url, translate_model, analysis_model
 
 
 def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180):
@@ -91,7 +116,11 @@ def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180
         except Exception as exc:
             last_exc = exc
             if attempt < retries:
-                print(f"     LLM 调用失败，重试 {attempt + 1}/{retries}...")
+                # 带上异常内容：只打印「调用失败」会把 504 超时、401 认证、
+                # 模型名不存在这些完全不同的原因混成一句话，没法定位。
+                print(f"     LLM 调用失败（{exc!r}），重试 {attempt + 1}/{retries}...")
+                # 504/429 是网关瞬时压力，退避后再试
+                time.sleep(3 * (attempt + 1))
                 continue
 
     raise last_exc
@@ -151,7 +180,11 @@ def call_llm(system_prompt, user_prompt, retries=2, model=None, timeout=180):
         except Exception as exc:
             last_exc = exc
             if attempt < retries:
-                print(f"     LLM 调用失败，重试 {attempt + 1}/{retries}...")
+                # 带上异常内容：只打印「调用失败」会把 504 超时、401 认证、
+                # 模型名不存在这些完全不同的原因混成一句话，没法定位。
+                print(f"     LLM 调用失败（{exc!r}），重试 {attempt + 1}/{retries}...")
+                # 504/429 是网关瞬时压力，退避后再试
+                time.sleep(3 * (attempt + 1))
                 continue
 
     raise last_exc

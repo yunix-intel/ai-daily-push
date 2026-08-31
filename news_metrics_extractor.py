@@ -10,6 +10,11 @@ import re
 class NewsMetricsExtractor:
     """新闻指标提取器"""
 
+    # 单次请求最多塞多少条新闻。一次性把 30+ 条丢给模型，
+    # 网关等不到上游响应就返回 504，整批指标全丢；
+    # 分批还能做到「单批失败只丢这一批」。
+    BATCH_SIZE = 12
+
     def __init__(self, llm_caller=None):
         """
         初始化提取器
@@ -21,7 +26,7 @@ class NewsMetricsExtractor:
 
     def extract_metrics(self, news_items):
         """
-        从新闻列表中提取关键指标
+        从新闻列表中提取关键指标（自动分批）
 
         Args:
             news_items: 新闻列表，每个包含 title, summary, content
@@ -34,10 +39,28 @@ class NewsMetricsExtractor:
 
         print(f"     提取 {len(news_items)} 条新闻的关键指标...")
 
+        collected = []
+        failed = 0
+        total_batches = (len(news_items) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+        for bi, start in enumerate(range(0, len(news_items), self.BATCH_SIZE), 1):
+            chunk = news_items[start:start + self.BATCH_SIZE]
+            got = self._extract_chunk(chunk, offset=start)
+            if got is None:
+                failed += 1
+                print(f"     [!] 指标提取第 {bi}/{total_batches} 批失败，跳过该批")
+                continue
+            collected.extend(got)
+
+        print(f"     提取到 {len(collected)} 个指标"
+              + (f"（{failed}/{total_batches} 批失败）" if failed else ""))
+        return collected
+
+    def _extract_chunk(self, news_items, offset=0):
+        """提取单批。成功返回列表（可能为空），失败返回 None 以便调用方区分。"""
         # 准备新闻文本
         news_texts = []
         for i, item in enumerate(news_items):
-            text = f"[{i+1}] {item.get('title', '')} - {item.get('summary', '')}"
+            text = f"[{offset + i + 1}] {item.get('title', '')} - {item.get('summary', '')}"
             news_texts.append(text)
 
         news_combined = "\n".join(news_texts)
@@ -78,22 +101,28 @@ class NewsMetricsExtractor:
 - 置信度基于信息来源的可靠性
 - 如果没有找到指标，返回空数组 []
 
-只返回 JSON 数组，不要添加其他内容。"""
+只返回 JSON，格式为 {{"metrics": [ ...上述对象... ]}}，不要添加其他内容。"""
 
         try:
             result = self.llm_caller(system_prompt, user_prompt)
 
-            # 验证结果是数组
+            # response_format=json_object 会强制模型把数组包成
+            # {"metrics": [...]} 这种对象，直接 isinstance(list) 判定必然失败，
+            # 提取到的指标会被整批丢掉（页面上 ARR/Token/定价 全是空的）。
+            if isinstance(result, dict):
+                for value in result.values():
+                    if isinstance(value, list):
+                        result = value
+                        break
+
             if isinstance(result, list):
-                print(f"     提取到 {len(result)} 个指标")
                 return result
-            else:
-                print(f"     [WARN] 指标提取结果格式错误")
-                return []
+            print(f"     [WARN] 指标提取结果格式错误：{type(result).__name__}")
+            return []
 
         except Exception as e:
             print(f"     [WARN] 指标提取失败: {e}")
-            return []
+            return None
 
     def group_metrics_by_type(self, metrics):
         """

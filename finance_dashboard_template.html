@@ -52,6 +52,15 @@
   .market-divider h2{font-size:22px;font-weight:800;display:flex;align-items:center;gap:10px}
   .market-divider h2 .badge{font-size:13px;background:var(--domestic);color:#fff;padding:4px 10px;border-radius:999px;font-weight:700}
   .market-divider.intl h2 .badge{background:var(--intl)}
+  .mustread{background:linear-gradient(135deg,#33280f,#1d1a10);border:1px solid var(--accent);border-radius:12px;padding:16px 20px}
+  .mustread h2{font-size:15px;font-weight:800;color:var(--accent);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .mustread ol{list-style:none;counter-reset:mr;margin:0;padding:0}
+  .mustread li{counter-increment:mr;display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px dashed var(--border)}
+  .mustread li:last-child{border-bottom:none}
+  .mustread li::before{content:counter(mr);flex:0 0 auto;width:20px;height:20px;background:var(--accent);color:#1a1109;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800}
+  .mustread .mr-t{flex:1;font-size:14px;font-weight:600;line-height:1.5;text-align:justify}
+  .mustread .mr-t a:hover{color:var(--accent)}
+  .mustread .mr-s{font-size:12px;color:var(--muted);white-space:nowrap}
   .nav{position:sticky;top:0;z-index:20;background:rgba(14,16,20,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);margin-top:14px}
   .nav .wrap{display:flex;gap:10px;overflow-x:auto;padding:12px 18px;scrollbar-width:thin}
   .nav a{flex:0 0 auto;font-size:13.5px;color:var(--muted);border:1px solid var(--border);background:var(--bg2);padding:7px 13px;border-radius:999px;white-space:nowrap;transition:.15s}
@@ -123,6 +132,8 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   document.getElementById('heroStats').innerHTML=st;
   const sg=DATA.strategy||{};
   let sb='';
+  // 节后首日：先放假期要闻回顾，再放今日策略——用户开盘前最先要知道休市期间发生了什么。
+  if(sg.holidaySummary) sb+='<div class="sub-h">🏖 休市期间要闻回顾</div><p>'+esc(sg.holidaySummary)+'</p>';
   if(sg.aShare) sb+='<div class="sub-h">A 股</div><p>'+esc(sg.aShare)+'</p>';
   if(sg.hkShare) sb+='<div class="sub-h">港股</div><p>'+esc(sg.hkShare)+'</p>';
   if(sg.risk) sb+='<div class="risk">'+esc(sg.risk)+'</div>';
@@ -134,8 +145,20 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     const events=marketData.emergencyEvents||[];
     const an=marketData.analysis||{};
     const sections=marketData.sections||[];
+    const mustRead=marketData.mustRead||[];
     if(!sections.length && !an.summary && !events.length) return '';
     let html='<div class="market-divider'+(marketId==='intl'?' intl':'')+'" id="'+marketId+'-section"><h2>'+marketLabel+'<span class="badge">'+sections.reduce((s,sec)=>s+sec.items.length,0)+' 条</span></h2></div>';
+    // 核心必读：按重要性评分挑出的 5-10 条，置于该市场所有板块最前面。
+    if(mustRead.length){
+      html+='<div class="block mustread"><h2>⭐ 核心必读 · 最重要 '+mustRead.length+' 条</h2><ol>';
+      mustRead.forEach(m=>{
+        const u=safeUrl(m.original||'');
+        const t=esc(m.title);
+        html+='<li><div class="mr-t">'+(u&&u!=='#'?'<a href="'+esc(u)+'" target="_blank" rel="noopener noreferrer">'+t+'</a>':t)+'</div>'
+            +'<div class="mr-s">'+esc(m.source||'')+'</div></li>';
+      });
+      html+='</ol></div>';
+    }
     if(events.length){
       html+='<div class="block emergency"><h2>🚨 突发事件</h2><ol>';
       events.forEach(e=>{
@@ -244,11 +267,19 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
 
   // 资金流向板块
   const moneyFlow = DATA.moneyFlow || {};
-  if(moneyFlow.north_flow || moneyFlow.sector_flow || moneyFlow.stock_flow) {
+  // 沪深交易所已停止披露北向资金盘中净流入，接口只剩占位 0；
+  // available=false 时整块隐藏，免得把「+0.00 亿」当成真实行情读。
+  const showNorth = moneyFlow.north_flow && moneyFlow.north_flow.available
+                    && moneyFlow.north_flow.total_flow !== undefined;
+  const hasSector = moneyFlow.sector_flow && ((moneyFlow.sector_flow.top_inflow||[]).length
+                    || (moneyFlow.sector_flow.top_outflow||[]).length);
+  const hasStock = moneyFlow.stock_flow && ((moneyFlow.stock_flow.top_inflow||[]).length
+                   || (moneyFlow.stock_flow.top_outflow||[]).length);
+  if(showNorth || hasSector || hasStock) {
     main+='<div class="market-divider" id="money-flow-section"><h2>💰 资金流向</h2></div>';
 
     // 北向资金
-    if(moneyFlow.north_flow && moneyFlow.north_flow.total_flow !== undefined) {
+    if(showNorth) {
       const nf = moneyFlow.north_flow;
       const totalCls = nf.total_flow > 0 ? 'up' : (nf.total_flow < 0 ? 'down' : '');
       const shCls = nf.sh_flow > 0 ? 'up' : (nf.sh_flow < 0 ? 'down' : '');

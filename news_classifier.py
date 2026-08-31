@@ -4,13 +4,60 @@
 使用 LLM 进行国内/国际分类、重要性评分、突发事件识别
 """
 import json
+import os
 import re
 from typing import List, Dict, Literal, Optional
+
+# 分类/评分是「机械打标」任务，不是推理任务：条目多、单条判断简单。
+# 用快模型（翻译模型）而不是推理模型——推理模型处理上百条要跑好几分钟，
+# 网关等不到上游响应就返回 503，整条链路静默回退到关键词兜底
+# （国内要闻混进美国新闻、重要新闻不排序）。
+# 也不能硬编码模型名：自建网关只挂了自己那几个模型，写死 gpt-4o-mini 必然 503。
+CLASSIFY_MODEL_DEFAULT = "deepseek-v4-flash"
+
+# 单次请求最多塞多少条。一次性把 100 条丢给模型会超时，
+# 分批还能做到「单批失败只丢这一批」而不是整体回退。
+CLASSIFY_BATCH_SIZE = 20
+
+
+def _classify_model():
+    """分类/评分使用的模型：优先专用变量，其次翻译模型（快、便宜）。"""
+    return (os.environ.get("OPENAI_MODEL_CLASSIFY")
+            or os.environ.get("OPENAI_MODEL_TRANSLATE")
+            or CLASSIFY_MODEL_DEFAULT).strip()
+
+
+def _extract_json_array(result):
+    """从 LLM 返回值里取出 JSON 数组。
+
+    调用方可能拿到三种形态：已解析好的 list、裸数组字符串、
+    或被 response_format=json_object 包了一层的 {"result": [...]}。
+    贪婪匹配是必须的——突发事件那种「数组里套数组」的结构，
+    非贪婪会只截到最内层的 affected_sectors。
+    """
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict):
+        for value in result.values():
+            if isinstance(value, list):
+                return value
+        raise ValueError("返回的 JSON 对象里没有数组字段")
+    match = re.search(r'\[.*\]', str(result), re.DOTALL)
+    if not match:
+        raise ValueError("无法提取 JSON 数组")
+    return json.loads(match.group(0))
+
+
+def _chunked(items, size):
+    for start in range(0, len(items), size):
+        yield start, items[start:start + size]
 
 
 def classify_news_region_batch(items: List[Dict], llm_call_func) -> List[str]:
     """
     批量判断新闻涉及的地区（国内/国际）
+
+    分批送模型，单批失败只让该批回退到关键词，不拖垮整体分类。
 
     Args:
         items: 新闻列表，每个包含 title, summary
@@ -22,7 +69,23 @@ def classify_news_region_batch(items: List[Dict], llm_call_func) -> List[str]:
     if not items:
         return []
 
-    # 构建批量分类提示
+    results: List[str] = []
+    failed_batches = 0
+    for _, chunk in _chunked(items, CLASSIFY_BATCH_SIZE):
+        try:
+            results.extend(_classify_region_chunk(chunk, llm_call_func))
+        except Exception as exc:
+            failed_batches += 1
+            print(f"     [!] 区域分类单批失败（{len(chunk)} 条），该批走关键词回退：{exc}")
+            results.extend(classify_by_keywords(item) for item in chunk)
+
+    if failed_batches:
+        print(f"     [!] 区域分类共 {failed_batches} 批回退")
+    return results
+
+
+def _classify_region_chunk(items: List[Dict], llm_call_func) -> List[str]:
+    """对一批（<= CLASSIFY_BATCH_SIZE 条）新闻做区域分类。失败抛异常交给调用方回退。"""
     news_list = []
     for i, item in enumerate(items, 1):
         title = item.get('title', '')
@@ -40,33 +103,25 @@ def classify_news_region_batch(items: List[Dict], llm_call_func) -> List[str]:
 新闻列表：
 {chr(10).join(news_list)}
 
-返回 JSON 数组，每个元素为 "domestic" 或 "international"，顺序对应新闻编号：
+共 {len(items)} 条，必须返回长度为 {len(items)} 的 JSON 数组，
+每个元素为 "domestic" 或 "international"，顺序对应新闻编号：
 ["domestic", "international", "domestic", ...]
 """
 
-    try:
-        result = llm_call_func(system_prompt, user_prompt, model='gpt-4o-mini')
-        # 解析 JSON
-        if isinstance(result, str):
-            # 提取 JSON 数组
-            match = re.search(r'\[.*?\]', result, re.DOTALL)
-            if match:
-                classifications = json.loads(match.group(0))
-            else:
-                raise ValueError("无法提取 JSON 数组")
-        else:
-            classifications = result
+    classifications = _extract_json_array(
+        llm_call_func(system_prompt, user_prompt, model=_classify_model())
+    )
 
-        # 验证结果
-        if len(classifications) != len(items):
-            raise ValueError(f"分类结果数量不匹配：{len(classifications)} vs {len(items)}")
+    if len(classifications) != len(items):
+        raise ValueError(f"分类结果数量不匹配：{len(classifications)} vs {len(items)}")
 
-        return classifications
-
-    except Exception as e:
-        print(f"     [!] LLM 批量分类失败，使用关键词回退：{e}")
-        # 回退到关键词分类
-        return [classify_by_keywords(item) for item in items]
+    # 规范化：模型偶尔会返回 "Domestic"/"中国" 之类
+    normalized = []
+    for value in classifications:
+        text = str(value).strip().lower()
+        normalized.append('domestic' if text.startswith('dom') or '国内' in text or '中国' in text
+                          else 'international')
+    return normalized
 
 
 def classify_by_keywords(item: Dict) -> Literal['domestic', 'international']:
@@ -109,6 +164,9 @@ def score_news_importance_batch(items: List[Dict], llm_call_func, market_context
     """
     批量评估新闻重要性（0-10分）
 
+    分批送模型，单批失败只让该批拿默认分，不会让全部新闻退化成同一分数
+    （那会让「最重要 5-10 条」排序完全失效）。
+
     Args:
         items: 新闻列表
         llm_call_func: LLM 调用函数，签名为 (system_prompt, user_prompt, model=None)
@@ -120,7 +178,23 @@ def score_news_importance_batch(items: List[Dict], llm_call_func, market_context
     if not items:
         return []
 
-    # 构建批量评分提示
+    scores: List[int] = []
+    failed_batches = 0
+    for _, chunk in _chunked(items, CLASSIFY_BATCH_SIZE):
+        try:
+            scores.extend(_score_importance_chunk(chunk, llm_call_func, market_context))
+        except Exception as exc:
+            failed_batches += 1
+            print(f"     [!] 重要性评分单批失败（{len(chunk)} 条），该批用默认分：{exc}")
+            scores.extend([5] * len(chunk))
+
+    if failed_batches:
+        print(f"     [!] 重要性评分共 {failed_batches} 批回退")
+    return scores
+
+
+def _score_importance_chunk(items: List[Dict], llm_call_func, market_context: str = "") -> List[int]:
+    """对一批新闻评分。失败抛异常交给调用方回退。"""
     news_list = []
     for i, item in enumerate(items, 1):
         title = item.get('title', '')
@@ -148,36 +222,20 @@ def score_news_importance_batch(items: List[Dict], llm_call_func, market_context
 新闻列表：
 {chr(10).join(news_list)}
 
-返回 JSON 数组，每个元素为 0-10 的整数，顺序对应新闻编号：
+共 {len(items)} 条，必须返回长度为 {len(items)} 的 JSON 数组，
+每个元素为 0-10 的整数，顺序对应新闻编号：
 [8, 5, 9, 6, ...]
 """
 
-    try:
-        result = llm_call_func(system_prompt, user_prompt, model='gpt-4o-mini')
+    scores = _extract_json_array(
+        llm_call_func(system_prompt, user_prompt, model=_classify_model())
+    )
 
-        # 解析 JSON
-        if isinstance(result, str):
-            match = re.search(r'\[.*?\]', result, re.DOTALL)
-            if match:
-                scores = json.loads(match.group(0))
-            else:
-                raise ValueError("无法提取 JSON 数组")
-        else:
-            scores = result
+    if len(scores) != len(items):
+        raise ValueError(f"评分结果数量不匹配：{len(scores)} vs {len(items)}")
 
-        # 验证和修正结果
-        if len(scores) != len(items):
-            raise ValueError(f"评分结果数量不匹配：{len(scores)} vs {len(items)}")
-
-        # 确保分数在 0-10 范围内
-        scores = [max(0, min(10, int(s))) for s in scores]
-
-        return scores
-
-    except Exception as e:
-        print(f"     [!] LLM 批量评分失败，使用默认分数：{e}")
-        # 回退：所有新闻默认 5 分
-        return [5] * len(items)
+    # 确保分数在 0-10 范围内
+    return [max(0, min(10, int(s))) for s in scores]
 
 
 def identify_breaking_news(items: List[Dict], llm_call_func, time_threshold_hours: int = 24) -> List[Dict]:
@@ -208,7 +266,29 @@ def identify_breaking_news(items: List[Dict], llm_call_func, time_threshold_hour
     if not candidates:
         return []
 
-    # 第二步：LLM 判断重要性和影响
+    # 第二步：LLM 判断重要性和影响（分批，避免一次性请求过大超时）
+    breaking_events = []
+    for _, chunk in _chunked(candidates, CLASSIFY_BATCH_SIZE):
+        try:
+            breaking_events.extend(_analyze_breaking_chunk(chunk, llm_call_func))
+        except Exception as exc:
+            print(f"     [!] 突发事件识别单批失败（{len(chunk)} 条）：{exc}")
+            # 回退：该批取前 2 条当待确认事件
+            breaking_events.extend({
+                'title': item.get('title', ''),
+                'desc': item.get('summary', '')[:100],
+                'impact': '需进一步关注',
+                'direction': '待确认',
+                'level': '一般',
+                'sectors': [],
+                'original_item': item
+            } for item in chunk[:2])
+
+    return breaking_events
+
+
+def _analyze_breaking_chunk(candidates: List[Dict], llm_call_func) -> List[Dict]:
+    """分析一批候选突发事件。失败抛异常交给调用方回退。"""
     news_list = []
     for i, item in enumerate(candidates, 1):
         title = item.get('title', '')
@@ -232,55 +312,34 @@ def identify_breaking_news(items: List[Dict], llm_call_func, time_threshold_hour
   "brief_analysis": "简要分析（50字以内）"  // 市场影响分析
 }}
 
-返回 JSON 数组：
+共 {len(candidates)} 条，返回长度为 {len(candidates)} 的 JSON 数组：
 [{{"is_breaking": true, ...}}, {{"is_breaking": false, ...}}, ...]
 """
 
-    try:
-        result = llm_call_func(system_prompt, user_prompt, model='gpt-4o-mini')
+    analyses = _extract_json_array(
+        llm_call_func(system_prompt, user_prompt, model=_classify_model())
+    )
 
-        # 解析 JSON
-        if isinstance(result, str):
-            match = re.search(r'\[.*?\]', result, re.DOTALL)
-            if match:
-                analyses = json.loads(match.group(0))
-            else:
-                raise ValueError("无法提取 JSON 数组")
-        else:
-            analyses = result
+    # 筛选真正的突发事件
+    breaking_events = []
+    for i, analysis in enumerate(analyses):
+        if i >= len(candidates):
+            break
+        if not isinstance(analysis, dict):
+            continue
 
-        # 筛选真正的突发事件
-        breaking_events = []
-        for i, analysis in enumerate(analyses):
-            if i >= len(candidates):
-                break
+        if analysis.get('is_breaking') and analysis.get('importance', 0) >= 7:
+            breaking_events.append({
+                'title': candidates[i].get('title', ''),
+                'desc': candidates[i].get('summary', '')[:100],
+                'impact': analysis.get('brief_analysis', ''),
+                'direction': analysis.get('impact_direction', '中性'),
+                'level': analysis.get('impact_level', '一般'),
+                'sectors': analysis.get('affected_sectors', []),
+                'original_item': candidates[i]
+            })
 
-            if analysis.get('is_breaking') and analysis.get('importance', 0) >= 7:
-                event = {
-                    'title': candidates[i].get('title', ''),
-                    'desc': candidates[i].get('summary', '')[:100],
-                    'impact': analysis.get('brief_analysis', ''),
-                    'direction': analysis.get('impact_direction', '中性'),
-                    'level': analysis.get('impact_level', '一般'),
-                    'sectors': analysis.get('affected_sectors', []),
-                    'original_item': candidates[i]
-                }
-                breaking_events.append(event)
-
-        return breaking_events
-
-    except Exception as e:
-        print(f"     [!] 突发事件识别失败：{e}")
-        # 回退：返回前3个候选
-        return [{
-            'title': item.get('title', ''),
-            'desc': item.get('summary', '')[:100],
-            'impact': '需进一步关注',
-            'direction': '待确认',
-            'level': '一般',
-            'sectors': [],
-            'original_item': item
-        } for item in candidates[:3]]
+    return breaking_events
 
 
 if __name__ == '__main__':

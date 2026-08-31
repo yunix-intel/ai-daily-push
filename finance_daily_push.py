@@ -24,7 +24,7 @@ LLM 配置（支持自建 OpenAI 兼容网关）：
   python finance_daily_push.py            # 生成网页 + 推送
   python finance_daily_push.py --no-push  # 只生成网页，不推送（调试）
 """
-import json, os, re, sys, urllib.parse, urllib.request, urllib.error
+import json, os, re, sys, time, urllib.parse, urllib.request, urllib.error
 import datetime as dt_module
 from datetime import datetime, timezone, timedelta, date
 from email.utils import parsedate_to_datetime
@@ -103,16 +103,39 @@ QUOTE_CODES = [
 
 
 def clean_html_tags(text):
-    """清理HTML标签和实体"""
+    """清理 HTML 标签、脚本/样式块、以及 RSS 摘要里泄露的裸 CSS。
+
+    只做 `re.sub(r'<[^>]+>', '')` 是不够的，实测漏了两类：
+      1. 摘要被源站按字数截断，尾部留下没有 `>` 的半个标签（`<span class=`），
+         正则匹配不到，直接印到页面上；
+      2. 财新等源把正文里的 <style> 内容当纯文本塞进 summary，
+         去掉标签后只剩 `.lanmu_textend{ padding-bottom: 28px; }` 这种裸 CSS 规则。
+    """
     import html as html_module
 
-    # 解码HTML实体
+    if not text:
+        return ""
+
+    # 1. 先整块删掉 script/style，避免其内容在去标签后变成正文
+    text = re.sub(r'(?is)<(script|style)\b.*?</\1\s*>', ' ', text)
+
+    # 2. 常规标签
+    text = re.sub(r'<[^>]+>', ' ', text)
+
+    # 3. 尾部被截断的半个标签：`<span class=` / `<a href="http…`（后面再没有 `>`）
+    text = re.sub(r'<[^>]*$', ' ', text)
+
+    # 4. 解码实体（&nbsp; &amp; …）；放在去标签之后，避免 &lt;b&gt; 解码后又变成标签
     text = html_module.unescape(text)
 
-    # 移除HTML标签
-    text = re.sub(r'<[^>]+>', '', text)
+    # 5. 解码后可能重新出现标签形态，再扫一遍
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'<[^>]*$', ' ', text)
 
-    # 清理多余空白
+    # 6. 裸 CSS 规则：`.cls{...}` / `#id{...}` / `tag a { ... }`
+    text = re.sub(r'(?:^|\s)[.#]?[\w-]+(?:\s+[\w-]+)*\s*\{[^{}]*\}', ' ', text)
+
+    # 7. 折叠空白
     text = re.sub(r'\s+', ' ', text).strip()
 
     return text
@@ -225,65 +248,107 @@ def _fetch_rss_with_mirrors(source_name, path, limit=20):
 
 
 def classify_news_category(item):
-    """分类新闻为国内或国际"""
-    text = f"{item.get('title', '')} {item.get('summary', '')}".lower()
+    """分类新闻为国内或国际（关键词回退方案，LLM 分类失败时使用）。
 
-    # 国际新闻关键词（优先级高）
+    用「加权计分」而不是「命中任一国际词就判国际」：后者会把
+    「长鑫存储起诉美国国防部」「A股半导体回升，受美股影响」这类
+    主体在国内的新闻整条踢到国际去，也解释不了为什么国内板块里
+    还会冒出美联储新闻——命中顺序决定一切，先扫到哪个算哪个。
+    改为两侧都算分，标题权重高于摘要（标题才代表新闻主体）。
+    """
+    title = (item.get('title', '') or '').lower()
+    summary = (item.get('summary', '') or '').lower()
+
     international_keywords = [
-        '美国', '美联储', '美元', 'fed', 'federal reserve',
-        '欧洲', '欧盟', '欧元', 'ecb', '日本', '日元',
+        '美国', '美联储', '美元', 'fed', 'federal reserve', 'warsh', 'powell',
+        '欧洲', '欧盟', '欧元', 'ecb', '日本', '日元', '日央行',
         '特朗普', 'trump', '拜登', 'biden',
-        '英国', '法国', '德国', 'uk', 'france', 'germany',
-        'wall street', 'nasdaq', 'dow jones', 's&p'
+        '英国', '法国', '德国', '印度', 'uk', 'france', 'germany',
+        'wall street', 'nasdaq', 'dow jones', 's&p', 'jackson hole',
+        # 地缘/其他经济体：中文源报道海外事件时往往不含上面任何一个词，
+        # 只写国名（「伊朗称打击位于阿联酋的空军基地」），漏了就会掉进国内板块。
+        '伊朗', '以色列', '阿联酋', '沙特', '卡塔尔', '约旦', '土耳其',
+        '俄罗斯', '乌克兰', '韩国', '朝鲜', '越南', '泰国', '新加坡',
+        '巴西', '墨西哥', '加拿大', '澳大利亚', '尼泊尔', '缅甸',
+        '霍尔木兹', '北约', '欧佩克', 'opec',
     ]
 
-    # 国内新闻关键词
     domestic_keywords = [
         '中国', '央行', '人民币', 'a股', '沪指', '深成指',
-        '港股', '恒生', '深圳', '上海', '北京',
-        '证监会', '银保监', '发改委', '国务院',
-        '创业板', '科创板', '沪深'
+        '港股', '恒生', '深圳', '上海', '北京', '广州',
+        '证监会', '银保监', '发改委', '国务院', '财政部',
+        '创业板', '科创板', '沪深', '上证', '深证',
+        '沪股通', '深股通', '北向资金', '南向资金',
     ]
 
-    # 先检查国际关键词
-    for kw in international_keywords:
-        if kw in text:
-            return 'international'
+    def _score(keywords):
+        # 标题命中记 3 分、摘要命中记 1 分：标题决定新闻主体，摘要常常只是背景提及。
+        score = 0
+        for kw in keywords:
+            if kw in title:
+                score += 3
+            elif kw in summary:
+                score += 1
+        return score
 
-    # 再检查国内关键词
-    for kw in domestic_keywords:
-        if kw in text:
-            return 'domestic'
+    intl_score = _score(international_keywords)
+    dom_score = _score(domestic_keywords)
 
-    # 根据来源判断
+    # 中国市场主体信号：标题出现沪深港交易所/盘面用语等「只可能描述 A 股港股」的词，
+    # 说明新闻主语在中国一侧。注意这里只放歧义极低的词——「涨停/跌停」曾误伤
+    # 含中文的国际新闻，凡是可能出现在外媒中文稿里的通用词都不要加。
+    domestic_subject_markers = [
+        '我国', '国内', '境内', '在华',
+        '两市', '北交所', '上交所', '深交所', '港交所',
+        '沪指', '深指', 'a股', '港股',
+    ]
+    if any(mk in title for mk in domestic_subject_markers):
+        dom_score += 3
+
+    if dom_score > intl_score:
+        return 'domestic'
+    if intl_score > dom_score:
+        return 'international'
+
+    # 打平（含两边都是 0）时按来源判断：中文财经源默认国内。
     source = item.get('source', '')
-    if any(s in source for s in ['新浪', '第一财经', '财联社', '证券时报', '金十', '财新']):
+    if isinstance(source, dict):
+        source = source.get('name', '')
+    if any(s in str(source) for s in ['新浪', '第一财经', '财联社', '证券时报', '金十', '财新', '同花顺', '格隆汇']):
         return 'domestic'
 
-    # 默认国际
     return 'international'
 
 
 def filter_aggregated_news(items):
-    """过滤掉汇总类新闻"""
+    """过滤掉汇总类新闻（来源本身就是「今日要闻汇总」这类二手聚合稿）。
+
+    只按标题判断。早期版本还会检查摘要里的编号数量（>=3 个「1. 2. 3.」就算汇总），
+    但财经快讯的正文里列举涨跌个股、政策条款时天然带编号，实测把
+    「8月统计局制造业PMI升至49.8」「研报掘金丨中金…」这类单一事件新闻全误杀了，
+    所以摘要编号这条规则整体移除——宁可漏过个别汇总稿，也不能丢掉真新闻。
+    """
     aggregated_keywords = [
         '今日要闻', '要闻汇总', '早间要闻', '早报',
         '盘前必读', '财经早报', '今日看点', '盘前提示',
-        '一周回顾', '本周要闻', '周报', '每日资讯'
+        '一周回顾', '本周要闻', '周报', '每日资讯',
+        '午盘', '收盘综述', '早知道', '市场综述',
+    ]
+    # 英文源的汇总稿：这一步跑在翻译之前，标题还是英文，
+    # 中文关键词一个都匹配不上（Bloomberg 的 "Markets Wrap" 就是这么漏进去的）。
+    aggregated_keywords_en = [
+        'markets wrap', 'market wrap', 'daily briefing', 'morning brief',
+        'evening brief', 'week ahead', 'weekly recap', 'what to watch',
+        'live updates', 'here are the', 'roundup',
     ]
 
     filtered = []
     for item in items:
         title = item.get('title', '')
-        summary = item.get('summary', '')
+        title_lower = title.lower()
 
-        # 检查标题
-        is_aggregated = any(kw in title for kw in aggregated_keywords)
-
-        # 检查摘要是否有多个编号（3个以上）
-        numbered_items = re.findall(r'[\d一二三四五六七八九十]+[、．.)）]', summary)
-        if len(numbered_items) >= 3:
-            is_aggregated = True
+        is_aggregated = (any(kw in title for kw in aggregated_keywords)
+                         or any(kw in title_lower for kw in aggregated_keywords_en))
 
         if not is_aggregated:
             filtered.append(item)
@@ -364,6 +429,36 @@ def fetch_finance_items(hours=24, per_feed=20):
     return {"domestic": filtered_domestic, "international": filtered_international}
 
 
+def _looks_english(text):
+    """按内容判断是否仍是英文（没有中文字符，且有足够多的拉丁字母）。
+
+    只靠来源标记不够：批量翻译时模型偶尔会少返回几条，那几条会带着英文标题
+    一路走到页面上；中文源偶尔也会混进纯英文标题。用内容判定兜底。
+    """
+    s = (text or "").strip()
+    if not s:
+        return False
+    if any('一' <= c <= '鿿' for c in s):
+        return False
+    return sum(1 for c in s if c.isascii() and c.isalpha()) >= 8
+
+
+def _apply_translation(items, indexes, mapping):
+    """把翻译结果写回条目，返回成功条数。"""
+    done = 0
+    for i in indexes:
+        got = mapping.get(i)
+        if not got:
+            continue
+        title_zh, summary_zh = got
+        if title_zh:
+            items[i]["title"] = title_zh
+            done += 1
+        if summary_zh:
+            items[i]["summary"] = summary_zh
+    return done
+
+
 def translate_finance_items(items):
     """用 LLM 批量翻译英文条目为中文，保留原文；失败则保留英文原文。
 
@@ -377,8 +472,13 @@ def translate_finance_items(items):
         item["originalTitle"] = item["title"]
         item["originalSummary"] = item["summary"]
 
-    # 2. 找出英文条目
-    en_indexes = [i for i, item in enumerate(items) if item.get("isEnglish")]
+    # 2. 找出英文条目：来源标记 + 内容判定，双保险
+    en_indexes = [
+        i for i, item in enumerate(items)
+        if item.get("isEnglish")
+        or _looks_english(item.get("title"))
+        or _looks_english(item.get("summary"))
+    ]
     if not en_indexes:
         print("     无英文条目，跳过翻译")
         return items
@@ -388,19 +488,20 @@ def translate_finance_items(items):
     # 3. LLM 批量翻译
     try:
         pairs = [(i, items[i]["title"], items[i]["summary"]) for i in en_indexes]
-        mapping = translate_batch_llm(pairs)
-        done = 0
-        for i in en_indexes:
-            got = mapping.get(i)
-            if not got:
-                continue
-            title_zh, summary_zh = got
-            if title_zh:
-                items[i]["title"] = title_zh
-            if summary_zh:
-                items[i]["summary"] = summary_zh
-            if title_zh:
-                done += 1
+        done = _apply_translation(items, en_indexes, translate_batch_llm(pairs))
+
+        # 4. 补翻：大批次里模型漏返回的条目，用小批次再走一轮，
+        #    否则这些条目会以英文标题/摘要出现在页面上。
+        leftover = [i for i in en_indexes
+                    if _looks_english(items[i]["title"]) or _looks_english(items[i]["summary"])]
+        if leftover:
+            print(f"     仍有 {len(leftover)} 条未翻译，补翻一轮 ...")
+            retry_pairs = [(i, items[i]["title"], items[i]["summary"]) for i in leftover]
+            done += _apply_translation(items, leftover, translate_batch_llm(retry_pairs, batch_size=5))
+            still = [i for i in leftover
+                     if _looks_english(items[i]["title"]) or _looks_english(items[i]["summary"])]
+            if still:
+                print(f"     [!] 补翻后仍有 {len(still)} 条保留英文原文")
 
         if done > 0:
             print(f"     LLM 翻译完成：{done}/{len(en_indexes)} 条")
@@ -438,10 +539,7 @@ def pre_translate_articles(items_international):
     def llm_caller(system_prompt, user_prompt, model=None):
         """LLM 调用包装器，返回纯文本"""
         try:
-            # 使用翻译模型
-            translate_model = _llm_config()[2]
-            result = call_llm(system_prompt, user_prompt, model=model or translate_model)
-            return result
+            return call_llm_text(system_prompt, user_prompt, model=model)
         except Exception as e:
             print(f"     [WARN] LLM 调用失败: {e}")
             return None
@@ -504,6 +602,9 @@ def classify_sections(items, rules):
 MODEL_TRANSLATE_DEFAULT = "deepseek-v4-flash"
 MODEL_ANALYSIS_DEFAULT = "gpt-5.6-sol"
 
+# 配置块只在首次调用时打印，见 _llm_config。
+_LLM_CONFIG_PRINTED = False
+
 
 def _llm_config():
     cfg_path = os.path.join(HERE, "push_config.json")
@@ -521,6 +622,29 @@ def _llm_config():
                        or cfg.get("openai_model_translate", "") or MODEL_TRANSLATE_DEFAULT).strip()
     analysis_model = (os.environ.get("OPENAI_MODEL_ANALYSIS")
                       or cfg.get("openai_model_analysis", "") or MODEL_ANALYSIS_DEFAULT).strip()
+
+    # 配置只打印一次：这个函数在每次 LLM 调用里都会被调，
+    # 无条件打印会让分批翻译/分类的进度被几十屏配置块淹没，日志没法看。
+    global _LLM_CONFIG_PRINTED
+    if not _LLM_CONFIG_PRINTED:
+        _LLM_CONFIG_PRINTED = True
+        print("\n" + "="*60)
+        print("[LLM配置] 财经日报模型配置")
+        print("="*60)
+        if api_key:
+            print(f"✓ API Key: 已配置 (长度: {len(api_key)})")
+        else:
+            print("✗ API Key: 未配置 - 请检查环境变量 OPENAI_API_KEY")
+        print(f"  Base URL: {base_url}")
+        if base_url == "https://api.openai.com/v1":
+            # 默认模型名只挂在自建网关上，官方 OpenAI 没有这些模型，
+            # 静默回退到官方地址不可能成功，只会把网关 key 发给第三方并收到 401。
+            print("  [WARN] 未设置 OPENAI_BASE_URL，正在请求官方 api.openai.com；")
+            print("         若 key 属于自建网关，调用会全部 401 失败。")
+        print(f"  翻译模型: {translate_model} (用于新闻标题/摘要翻译)")
+        print(f"  分析模型: {analysis_model} (用于市场总结/策略建议)")
+        print("="*60 + "\n")
+
     return api_key, base_url, translate_model, analysis_model
 
 
@@ -559,6 +683,49 @@ def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180
         except Exception as exc:
             last_exc = exc
             if attempt < retries:
+                # 504/429 基本都是网关瞬时压力：立刻重试等于把同一个请求
+                # 再撞一次同一堵墙。退避几秒再来，成功率明显更高。
+                time.sleep(3 * (attempt + 1))
+                continue
+    raise last_exc
+
+
+def call_llm_text(system_prompt, user_prompt, retries=1, model=None, timeout=180):
+    """调用 OpenAI 兼容接口并返回纯文本。
+
+    全文翻译要的是译文正文，不是 JSON：不能复用 call_llm_json
+    （它带 response_format=json_object，会强制模型输出 JSON）。
+    """
+    api_key, base_url, translate_model, _analysis_model = _llm_config()
+    if not api_key:
+        raise RuntimeError("未配置 OPENAI_API_KEY")
+    payload = {
+        "model": model or translate_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.3,
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/chat/completions",
+                data=data,
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            return body["choices"][0]["message"]["content"].strip()
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(3 * (attempt + 1))
                 continue
     raise last_exc
 
@@ -700,7 +867,13 @@ def generate_strategy(analysis, quotes, trading_status=None):
 
     market_status = trading_status['market_status']
     last_trading_day = trading_status['last_trading_day']
-    is_post_holiday = trading_status['is_post_holiday']
+    # 「要不要写假期回顾」和「要不要拉长收集窗口」必须用同一个判据，
+    # 否则会出现周一拉了 72 小时新闻、却因为 is_post_holiday=False 而不写回顾的割裂：
+    # trading_calendar 的 is_post_holiday 数的是「非交易日天数」（周末只有 2 天不算节后），
+    # 而收集窗口数的是 days_since_last_trading（周一必然是 3）。
+    # 只要距上一交易日 >= 3 天，休市期间就攒了两天以上的外围消息，值得单独回顾。
+    is_post_holiday = (trading_status['is_post_holiday']
+                       or trading_status['days_since_last_trading'] >= 3)
 
     # 准备突发事件文本
     events = analysis.get("emergencyEvents") or []
@@ -718,8 +891,11 @@ def generate_strategy(analysis, quotes, trading_status=None):
         }
 
     elif is_post_holiday:
-        # 节后首日：生成假期影响分析与策略
+        # 节后（含周末休市）首日：生成休市期间影响分析与策略
         days_off = trading_status['days_since_last_trading']
+        # 周一说「节后首日」很别扭，按休市天数区分措辞
+        gap_label = "节后首个交易日" if days_off > 3 else "休市后首个交易日"
+        summary_label = "假期期间" if days_off > 3 else "休市期间"
 
         user_prompt = f"""【指数行情快照】（截至上一交易日 {format_date_cn(last_trading_day)}）
 {_quotes_digest(quotes)}
@@ -736,14 +912,14 @@ def generate_strategy(analysis, quotes, trading_status=None):
 【突发事件及影响】
 {events_text}
 
-注意：今日是节后首个交易日（连续休市 {days_off} 天，上一交易日为 {format_date_cn(last_trading_day)}）。
+注意：今日是{gap_label}（连续休市 {days_off} 天，上一交易日为 {format_date_cn(last_trading_day)}）。
 
 请基于以上内容输出今日策略建议的 JSON：
 {{
-  "holiday_summary": "假期期间要闻回顾（80-150字），总结休市期间的重要事件和市场变化",
-  "aShare": "A股今日策略（150-250字），结合假期期间的外围市场变化和上一交易日情况，给出今日开盘预判、关注方向和操作建议",
-  "hkShare": "港股今日策略（150-250字），结合假期期间情况给出今日方向性判断",
-  "risk": "风险提示（60-120字），只讲需要警惕的风险点，特别是假期期间的外围风险"
+  "holiday_summary": "{summary_label}要闻回顾（80-150字），总结休市期间的重要事件和市场变化",
+  "aShare": "A股今日策略（150-250字），结合{summary_label}的外围市场变化和上一交易日情况，给出今日开盘预判、关注方向和操作建议",
+  "hkShare": "港股今日策略（150-250字），结合{summary_label}情况给出今日方向性判断",
+  "risk": "风险提示（60-120字），只讲需要警惕的风险点，特别是{summary_label}的外围风险"
 }}"""
 
         analysis_model = _llm_config()[3]
@@ -825,8 +1001,14 @@ def translate_page_url(original_url):
     # return "https://translate.google.com/translate?sl=auto&tl=zh-CN&u=" + urllib.parse.quote(original_url, safe="")
 
 
-def shape_finance(sections_domestic, sections_international, quotes, analysis_domestic, analysis_international, strategy, money_flow_data=None, window_hours=24):
-    """整合国内和国际市场数据，返回完整数据结构。"""
+def shape_finance(sections_domestic, sections_international, quotes, analysis_domestic,
+                  analysis_international, strategy, money_flow_data=None, window_hours=24,
+                  must_read_domestic=None, must_read_international=None):
+    """整合国内和国际市场数据，返回完整数据结构。
+
+    must_read_*：按 importance_score 选出的「核心必读」条目（原始 item 结构），
+    在页面顶部单独成板块，实现「最重要的 5-10 条前置」。
+    """
     now_utc = datetime.now(timezone.utc)
 
     # 国内要闻整形
@@ -869,6 +1051,10 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
                 "source": item.get("source", ""),
                 "original": link,
                 "translatedPage": translate_page_url(link) if is_translated else "",
+                # pre_translate_articles() 把全文译文写在 translated_content 上，
+                # 模板据此渲染「查看中文全文」按钮。之前整形时漏拷这个字段，
+                # 译文拿到了却传不到页面，按钮自然一直不出现。
+                "translated_content": item.get("translated_content", ""),
             })
         shaped_international.append({"label": section["label"], "items": items})
 
@@ -882,6 +1068,22 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         "internationalCount": sum(len(s["items"]) for s in shaped_international),
     }
 
+    # 核心必读整形：正文卡片里已经有这些条目，这里只需要标题/来源/链接用于顶部清单，
+    # 不重复带摘要和译文，避免 payload 体积翻倍。
+    def _shape_must_read(raw_items, limit=10):
+        out = []
+        for item in (raw_items or [])[:limit]:
+            title = item.get("title", "")
+            if not title:
+                continue
+            out.append({
+                "title": title,
+                "source": item.get("source", ""),
+                "original": item.get("link", ""),
+                "score": item.get("importance_score", 0),
+            })
+        return out
+
     return {
         "meta": meta,
         "quotes": quotes,
@@ -893,6 +1095,7 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
                 "macro": analysis_domestic.get("macro", ""),
                 "sector": analysis_domestic.get("sector", ""),
             },
+            "mustRead": _shape_must_read(must_read_domestic),
             "sections": shaped_domestic,
         },
         "international": {
@@ -902,12 +1105,18 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
                 "macro": analysis_international.get("macro", ""),
                 "sector": analysis_international.get("sector", ""),
             },
+            "mustRead": _shape_must_read(must_read_international),
             "sections": shaped_international,
         },
         "strategy": {
             "aShare": strategy.get("aShare", ""),
             "hkShare": strategy.get("hkShare", ""),
             "risk": strategy.get("risk", ""),
+            # 节后首日的假期要闻回顾：generate_strategy() 已经产出，
+            # 之前只进了微信 markdown，没进网页 payload，所以页面上看不到。
+            "holidaySummary": strategy.get("holiday_summary", ""),
+            "isPostHoliday": bool(strategy.get("is_post_holiday")),
+            "lastTradingDay": strategy.get("last_trading_day", ""),
         },
     }
 
@@ -944,7 +1153,7 @@ def build_finance_markdown(data, dashboard_url):
             lines.append("\n## 🎯 今日策略建议")
             # 节后首日：显示假期综述
             if sg.get("holiday_summary"):
-                lines.append(f"\n**假期期间要闻回顾**\n> {sg['holiday_summary']}")
+                lines.append(f"\n**休市期间要闻回顾**\n> {sg['holiday_summary']}")
             if sg.get("aShare"):
                 lines.append(f"\n**A 股**：{sg['aShare']}")
             if sg.get("hkShare"):
@@ -1124,11 +1333,16 @@ def main():
             "stock_flow": stock_flow
         }
 
-        print(f"     北向资金合计：{north_flow.get('total_flow', 0):+.2f} 亿元")
+        if north_flow.get('available'):
+            print(f"     北向资金合计：{north_flow.get('total_flow', 0):+.2f} 亿元")
+        else:
+            print("     北向资金：交易所已停止披露盘中净流入，跳过该板块")
         if sector_flow and sector_flow.get('top_inflow'):
-            print(f"     行业流入 Top 1：{sector_flow['top_inflow'][0].get('name', 'N/A')}")
+            print(f"     行业流入 Top 1：{sector_flow['top_inflow'][0].get('name', 'N/A')}"
+                  f"（{sector_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）")
         if stock_flow and stock_flow.get('top_inflow'):
-            print(f"     个股流入 Top 1：{stock_flow['top_inflow'][0].get('name', 'N/A')}")
+            print(f"     个股流入 Top 1：{stock_flow['top_inflow'][0].get('name', 'N/A')}"
+                  f"（{stock_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）")
     except Exception as exc:
         print(f"     [!] 资金流向抓取失败，继续执行：{exc!r}")
 
@@ -1298,8 +1512,7 @@ def main():
     print("[4/5] LLM 生成 A股/港股策略建议 ...")
 
     # 获取交易日状态
-    import datetime as dt_module
-    today = dt_module.date.today()
+    today = date.today()
     trading_status = get_trading_status(today, market='A')
 
     print(f"     交易日状态：{trading_status['market_status']}")
@@ -1328,7 +1541,9 @@ def main():
 
     data = shape_finance(sections_domestic, sections_international, quotes,
                         analysis_domestic, analysis_international, strategy,
-                        money_flow_data=money_flow_data, window_hours=args.hours)
+                        money_flow_data=money_flow_data, window_hours=args.hours,
+                        must_read_domestic=must_read_domestic,
+                        must_read_international=must_read_international)
 
     out_html = os.path.join(HERE, "finance_dashboard.html")
     with open(out_html, "w", encoding="utf-8") as f:

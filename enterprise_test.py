@@ -191,7 +191,7 @@ class EnterpriseTestSuite:
         # 测试边界情况
         test_cases = [
             datetime.date(2026, 1, 1),   # 元旦
-            datetime.date(2026, 2, 29),  # 闰年（2026不是闰年，应该处理）
+            datetime.date(2026, 2, 28),  # 2月最后一天（2026不是闰年）
             datetime.date(2026, 12, 31), # 年末
         ]
 

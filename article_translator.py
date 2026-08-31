@@ -6,6 +6,7 @@
 import os
 import json
 import hashlib
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 import requests
@@ -33,6 +34,17 @@ class ArticleTranslator:
             "Chrome/120.0.0.0 Safari/537.36"
         )
 
+    # 抓不到正文的链接：Bloomberg 视频页/直播页返回 403，
+    # 播客与视频本身也没有可翻译的正文，提前排除避免浪费一次抓取配额。
+    SKIP_URL_PATTERNS = ("/videos/", "/video/", "/audio/", "/podcast", "/live-blog", "/livestream")
+
+    # 硬付费墙 / 强反爬域名：正文抓取必然 403，换 UA 也没用。
+    # 不排除的话，这些条目会把每天 5 篇的全文翻译配额全部占掉
+    # （实测一次 3 个候选全是 bloomberg.com，最终 0 篇成功），
+    # 真正能翻的文章反而排不进来。
+    SKIP_DOMAINS = ("bloomberg.com", "wsj.com", "ft.com", "economist.com",
+                    "barrons.com", "nytimes.com", "seekingalpha.com")
+
     def is_worth_translating(self, item):
         """
         判断文章是否值得翻译
@@ -53,7 +65,15 @@ class ArticleTranslator:
             return False
 
         # 必须有原文链接
-        if not item.get("link"):
+        link = item.get("link")
+        if not link:
+            return False
+
+        # 视频/音频页没有正文，且常被反爬拦截
+        if any(p in link.lower() for p in self.SKIP_URL_PATTERNS):
+            return False
+
+        if any(dom in link.lower() for dom in self.SKIP_DOMAINS):
             return False
 
         # 标题包含"快讯"等关键词的跳过
@@ -62,8 +82,19 @@ class ArticleTranslator:
         if any(kw in title for kw in skip_keywords):
             return False
 
-        # 摘要长度 > 100 字（说明不是简短快讯）
-        summary = item.get("summary", "")
+        # 中文源不需要「全文翻译」。isEnglish 是抓取时按源打的标，
+        # 但格隆汇/第一财经这类中文源也会走到这里；再按原文内容兜一层，
+        # 否则中文正文会被送去做「英译中」，白占 5 篇配额还生成一份废译文。
+        original_title = item.get("originalTitle") or item.get("title", "")
+        original_summary = item.get("originalSummary") or item.get("summary", "")
+        probe = f"{original_title} {original_summary}"
+        if any('一' <= c <= '鿿' for c in probe):
+            return False
+
+        # 摘要够长才说明不是简短快讯。
+        # 必须量原文：这一步跑在标题摘要翻译之后，同一条英文摘要翻成中文后
+        # 字符数会缩到三分之一左右，拿中文长度卡 100 会把绝大多数正常长文误杀。
+        summary = original_summary
         if len(summary) < 100:
             return False
 
@@ -219,6 +250,9 @@ class ArticleTranslator:
 
         # 翻译每个分段
         translated_chunks = []
+        failed_chunks = 0
+        failed_chars = 0
+        total_chars = sum(len(c) for c in chunks)
         for i, chunk in enumerate(chunks):
             print(f"     翻译分段 {i+1}/{len(chunks)} ({len(chunk)} 字符)...")
 
@@ -239,17 +273,35 @@ class ArticleTranslator:
 
 直接返回译文，不要添加任何说明或标注。"""
 
-            try:
-                translated = self.llm_caller(system_prompt, user_prompt)
-                if translated:
-                    translated_chunks.append(translated.strip())
-                else:
-                    print(f"     [WARN] 分段 {i+1} 翻译失败，使用原文")
-                    translated_chunks.append(chunk)
+            # 单段最多再试一次。实测失败多是 SSL EOF / 504 这类瞬时错误，
+            # 隔几秒重来通常就成了；不重试的话整篇里会夹着一大段英文。
+            translated = None
+            for attempt in range(2):
+                try:
+                    translated = self.llm_caller(system_prompt, user_prompt)
+                    if translated:
+                        break
+                    print(f"     [WARN] 分段 {i+1} 返回空内容")
+                except Exception as e:
+                    print(f"     [WARN] 分段 {i+1} 翻译异常: {e}")
+                    translated = None
+                if attempt == 0:
+                    time.sleep(5)
 
-            except Exception as e:
-                print(f"     [WARN] 分段 {i+1} 翻译异常: {e}")
+            if translated:
+                translated_chunks.append(translated.strip())
+            else:
+                print(f"     [WARN] 分段 {i+1} 重试后仍失败，使用原文")
                 translated_chunks.append(chunk)
+                failed_chunks += 1
+                failed_chars += len(chunk)
+
+        # 失败占比按字符算，不按段数算：分段长度差很多，
+        # 3 段里失败 1 段可能是失败了近一半正文。夹着大段英文的「译文」
+        # 一旦存进 7 天缓存会反复复用，宁可判定失败、不显示按钮。
+        if failed_chunks and failed_chars / max(total_chars, 1) > 0.3:
+            print(f"     [WARN] {failed_chars}/{total_chars} 字符未翻成，判定为翻译失败")
+            return None
 
         # 合并翻译结果
         translated_content = '\n\n'.join(translated_chunks)
@@ -330,11 +382,22 @@ def batch_translate_articles(items, llm_caller, max_count=5):
     # 按重要性排序
     candidates.sort(key=lambda x: x.get("importance_score", 0), reverse=True)
 
-    # 翻译
+    # 翻译：抓取失败（付费墙/反爬）不占用配额，继续往后顺延，
+    # 否则前几条恰好抓不到时，页面上一个「查看中文全文」按钮都不会出现。
     translated_count = 0
-    for item in candidates[:max_count]:
+    attempted = 0
+    for item in candidates:
+        if translated_count >= max_count:
+            break
+        attempted += 1
         if translator.translate_news_item(item):
             translated_count += 1
+        # 兜底上限：最多尝试 max_count 的三倍，避免整批都抓不到时一直重试
+        if attempted >= max_count * 3:
+            break
+
+    if translated_count < min(max_count, len(candidates)):
+        print(f"     全文翻译：{translated_count} 篇成功 / 尝试 {attempted} 篇")
 
     return translated_count
 

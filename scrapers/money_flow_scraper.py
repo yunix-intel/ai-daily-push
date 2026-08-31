@@ -12,42 +12,74 @@ from datetime import datetime
 class MoneyFlowScraper:
     """资金流向爬虫"""
 
+    # 东财主站对 http:// 直接回 502，且单个 host 经常抽风，按序做故障转移。
+    API_HOSTS = [
+        "https://push2delay.eastmoney.com",
+        "https://push2.eastmoney.com",
+        "https://82.push2.eastmoney.com",
+    ]
+    UT = 'b2884a393a59ad64002292a3e90d46a5'
+
     def __init__(self):
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'http://data.eastmoney.com/'
+            'Referer': 'https://data.eastmoney.com/'
         }
-        self.timeout = 10
+        self.timeout = 15
+
+    def _get_json(self, path, params):
+        """按 host 列表依次尝试，第一个成功返回 JSON 的即用。全挂则抛最后一个异常。"""
+        last_exc = None
+        for host in self.API_HOSTS:
+            try:
+                response = requests.get(f"{host}{path}", params=params,
+                                        headers=self.headers, timeout=self.timeout)
+                response.raise_for_status()
+                return response.json()
+            except Exception as exc:
+                last_exc = exc
+                continue
+        raise last_exc
+
+    def _clist(self, fs, page_size, ascending=False):
+        """拉取资金流排行。ascending=True 取净流出榜。
+
+        必须单独请求一次升序：接口本身按 fid 降序返回，
+        在降序结果的尾部取「流出」拿到的其实还是净流入的条目。
+        """
+        params = {
+            'pn': '1',
+            'pz': str(page_size),
+            'po': '0' if ascending else '1',
+            'np': '1',
+            'ut': self.UT,
+            'fltt': '2',
+            'invt': '2',
+            'fid': 'f62',
+            'fs': fs,
+            'fields': 'f12,f14,f2,f3,f62,f184',
+        }
+        data = self._get_json("/api/qt/clist/get", params)
+        if not data or not data.get('data') or not data['data'].get('diff'):
+            return []
+        return data['data']['diff']
 
     def fetch_north_flow(self):
         """
         获取北向资金数据（沪股通+深股通）
 
+        注意：沪深交易所自 2024 年 8 月起不再披露北向资金盘中净流入，
+        接口只剩占位值，因此这里会把 available 标为 False，由展示层决定是否隐藏，
+        避免把「+0.00 亿元」当成真实数据展示。
+
         Returns:
             dict: 北向资金数据
         """
-        url = "http://push2.eastmoney.com/api/qt/kamt.rtmin/get"
-        params = {
-            'fields1': 'f1,f2,f3,f4',
-            'fields2': 'f51,f52,f53,f54,f56',
-            'ut': 'b2884a393a59ad64002292a3e90d46a5',
-            'cb': 'jQuery'
-        }
+        params = {'fields1': 'f1,f2,f3,f4', 'fields2': 'f51,f52,f54,f56', 'ut': self.UT}
 
         try:
-            response = requests.get(url, params=params, headers=self.headers, timeout=self.timeout)
-            response.raise_for_status()
-
-            # 移除 JSONP 包装
-            text = response.text
-            json_match = re.search(r'jQuery\d+_\d+\((.*)\)', text)
-            if json_match:
-                data = json.loads(json_match.group(1))
-                return self._parse_north_flow(data)
-            else:
-                print(f"     [WARN] 北向资金数据格式异常")
-                return self._empty_north_flow()
-
+            data = self._get_json("/api/qt/kamt/get", params)
+            return self._parse_north_flow(data)
         except Exception as e:
             print(f"     [WARN] 北向资金获取失败: {e}")
             return self._empty_north_flow()
@@ -62,26 +94,14 @@ class MoneyFlowScraper:
         Returns:
             dict: 行业资金流向数据
         """
-        url = "http://push2.eastmoney.com/api/qt/clist/get"
-        params = {
-            'pn': '1',
-            'pz': '50',
-            'po': '1',
-            'np': '1',
-            'ut': 'b2884a393a59ad64002292a3e90d46a5',
-            'fltt': '2',
-            'invt': '2',
-            'fid': 'f62',
-            'fs': 'm:90+t:2',
-            'fields': 'f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f204,f205,f124'
-        }
-
         try:
-            response = requests.get(url, params=params, headers=self.headers, timeout=self.timeout)
-            response.raise_for_status()
-            data = response.json()
-            return self._parse_sector_flow(data, top_n)
-
+            inflow = self._clist('m:90+t:2', top_n)
+            outflow = self._clist('m:90+t:2', top_n, ascending=True)
+            return {
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "top_inflow": [self._shape_flow(x) for x in inflow[:top_n]],
+                "top_outflow": [self._shape_flow(x) for x in outflow[:top_n]],
+            }
         except Exception as e:
             print(f"     [WARN] 行业资金流向获取失败: {e}")
             return self._empty_sector_flow()
@@ -96,136 +116,66 @@ class MoneyFlowScraper:
         Returns:
             dict: 个股资金流向数据
         """
-        url = "http://push2.eastmoney.com/api/qt/clist/get"
-        params = {
-            'pn': '1',
-            'pz': str(top_n * 2),
-            'po': '1',
-            'np': '1',
-            'ut': 'b2884a393a59ad64002292a3e90d46a5',
-            'fltt': '2',
-            'invt': '2',
-            'fid': 'f62',
-            'fs': 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23',
-            'fields': 'f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f204,f205,f124'
-        }
-
+        fs = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23'
         try:
-            response = requests.get(url, params=params, headers=self.headers, timeout=self.timeout)
-            response.raise_for_status()
-            data = response.json()
-            return self._parse_stock_flow(data, top_n)
-
+            inflow = self._clist(fs, top_n)
+            outflow = self._clist(fs, top_n, ascending=True)
+            return {
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "top_inflow": [self._shape_flow(x, with_code=True) for x in inflow[:top_n]],
+                "top_outflow": [self._shape_flow(x, with_code=True) for x in outflow[:top_n]],
+            }
         except Exception as e:
             print(f"     [WARN] 个股资金流向获取失败: {e}")
             return self._empty_stock_flow()
 
+    @staticmethod
+    def _num(value):
+        """东财在停牌/无数据时会返回 '-'，统一转成 0。"""
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _shape_flow(self, item, with_code=False):
+        """整形单条资金流记录。
+
+        f62 主力净流入（元）→ 亿元；f184 主力净占比（%）；
+        f3 涨跌幅在 fltt=2 下已经是百分数，再除 100 会把 +4.4% 变成 +0.04%。
+        """
+        shaped = {
+            "name": item.get('f14', ''),
+            "net_inflow": round(self._num(item.get('f62')) / 100000000, 2),
+            "change_pct": round(self._num(item.get('f3')), 2),
+            "net_ratio": round(self._num(item.get('f184')), 2),
+        }
+        if with_code:
+            shaped["code"] = item.get('f12', '')
+        return shaped
+
     def _parse_north_flow(self, data):
         """解析北向资金数据"""
         try:
-            if not data or 'data' not in data:
-                return self._empty_north_flow()
+            flow_data = (data or {}).get('data') or {}
 
-            flow_data = data['data']
-
-            # f51: 沪股通净流入（元）
-            # f52: 深股通净流入（元）
-            sh_flow = flow_data.get('f51', 0) / 100000000  # 转换为亿元
-            sz_flow = flow_data.get('f52', 0) / 100000000
+            # 新版接口按通道拆开：hk2sh / hk2sz 才是「北向」（外资买入 A 股）。
+            # dayNetAmtIn 单位为元。
+            sh_flow = self._num((flow_data.get('hk2sh') or {}).get('dayNetAmtIn')) / 100000000
+            sz_flow = self._num((flow_data.get('hk2sz') or {}).get('dayNetAmtIn')) / 100000000
             total_flow = sh_flow + sz_flow
 
             return {
                 "date": datetime.now().strftime("%Y-%m-%d"),
                 "sh_flow": round(sh_flow, 2),
                 "sz_flow": round(sz_flow, 2),
-                "total_flow": round(total_flow, 2)
+                "total_flow": round(total_flow, 2),
+                # 两个通道都是 0 基本可以断定是停止披露后的占位值，不是「刚好零流入」
+                "available": bool(sh_flow or sz_flow),
             }
 
         except Exception as e:
             print(f"     [WARN] 北向资金数据解析失败: {e}")
             return self._empty_north_flow()
-
-    def _parse_sector_flow(self, data, top_n):
-        """解析行业资金流向"""
-        try:
-            if not data or 'data' not in data or 'diff' not in data['data']:
-                return self._empty_sector_flow()
-
-            items = data['data']['diff']
-
-            # 按主力净流入排序
-            sorted_items = sorted(items, key=lambda x: x.get('f62', 0), reverse=True)
-
-            top_inflow = []
-            top_outflow = []
-
-            # Top N 流入
-            for item in sorted_items[:top_n]:
-                top_inflow.append({
-                    "name": item.get('f14', ''),
-                    "net_inflow": round(item.get('f62', 0) / 100000000, 2),  # 亿元
-                    "change_pct": round(item.get('f3', 0) / 100, 2)  # 涨跌幅
-                })
-
-            # Top N 流出
-            for item in sorted_items[-top_n:]:
-                top_outflow.append({
-                    "name": item.get('f14', ''),
-                    "net_inflow": round(item.get('f62', 0) / 100000000, 2),
-                    "change_pct": round(item.get('f3', 0) / 100, 2)
-                })
-
-            return {
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "top_inflow": top_inflow,
-                "top_outflow": list(reversed(top_outflow))
-            }
-
-        except Exception as e:
-            print(f"     [WARN] 行业资金流向数据解析失败: {e}")
-            return self._empty_sector_flow()
-
-    def _parse_stock_flow(self, data, top_n):
-        """解析个股资金流向"""
-        try:
-            if not data or 'data' not in data or 'diff' not in data['data']:
-                return self._empty_stock_flow()
-
-            items = data['data']['diff']
-
-            # 按主力净流入排序
-            sorted_items = sorted(items, key=lambda x: x.get('f62', 0), reverse=True)
-
-            top_inflow = []
-            top_outflow = []
-
-            # Top N 流入
-            for item in sorted_items[:top_n]:
-                top_inflow.append({
-                    "code": item.get('f12', ''),
-                    "name": item.get('f14', ''),
-                    "net_inflow": round(item.get('f62', 0) / 100000000, 2),  # 亿元
-                    "change_pct": round(item.get('f3', 0) / 100, 2)  # 涨跌幅
-                })
-
-            # Top N 流出
-            for item in sorted_items[-top_n:]:
-                top_outflow.append({
-                    "code": item.get('f12', ''),
-                    "name": item.get('f14', ''),
-                    "net_inflow": round(item.get('f62', 0) / 100000000, 2),
-                    "change_pct": round(item.get('f3', 0) / 100, 2)
-                })
-
-            return {
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "top_inflow": top_inflow,
-                "top_outflow": list(reversed(top_outflow))
-            }
-
-        except Exception as e:
-            print(f"     [WARN] 个股资金流向数据解析失败: {e}")
-            return self._empty_stock_flow()
 
     def _empty_north_flow(self):
         """返回空的北向资金数据"""
@@ -233,7 +183,8 @@ class MoneyFlowScraper:
             "date": datetime.now().strftime("%Y-%m-%d"),
             "sh_flow": 0,
             "sz_flow": 0,
-            "total_flow": 0
+            "total_flow": 0,
+            "available": False,
         }
 
     def _empty_sector_flow(self):
