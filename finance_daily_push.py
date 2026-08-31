@@ -1189,8 +1189,8 @@ def main():
     print("[4/5] LLM 生成 A股/港股策略建议 ...")
 
     # 获取交易日状态
-    import datetime
-    today = datetime.date.today()
+    import datetime as dt_module
+    today = dt_module.date.today()
     trading_status = get_trading_status(today, market='A')
 
     print(f"     交易日状态：{trading_status['market_status']}")
