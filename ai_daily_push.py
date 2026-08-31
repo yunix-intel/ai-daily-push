@@ -377,20 +377,62 @@ def _score_importance(text, section_label):
     return score
 
 
+def calculate_similarity(title1, title2):
+    """计算两个标题的相似度（Jaccard相似度）"""
+    import re
+    words1 = set(re.findall(r'\w+', title1.lower()))
+    words2 = set(re.findall(r'\w+', title2.lower()))
+
+    if not words1 or not words2:
+        return 0.0
+
+    intersection = words1 & words2
+    union = words1 | words2
+
+    return len(intersection) / len(union)
+
+
 def pick_highlights(flat_items, top_n=5):
-    """flat_items: [(entry_dict, section_label), ...]。按打分+原始序号排序取前 N 条。"""
+    """flat_items: [(entry_dict, section_label), ...]。按打分+原始序号排序取前 N 条，自动去重。"""
     ranked = sorted(
         flat_items,
         key=lambda pair: (-_score_importance(pair[0]["title"] + " " + pair[0].get("originalTitle", ""), pair[1]), pair[0]["idx"]),
     )
-    return [entry for entry, _label in ranked[:top_n]]
+
+    # 去重：检查标题相似度
+    selected = []
+    for entry, label in ranked:
+        if len(selected) >= top_n:
+            break
+
+        # 检查是否与已选新闻重复
+        is_duplicate = False
+        for existing_entry in selected:
+            similarity = calculate_similarity(
+                entry.get("title", ""),
+                existing_entry.get("title", "")
+            )
+            if similarity > 0.6:  # 相似度阈值60%
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            selected.append(entry)
+
+    return selected
 
 # ----------------------------- 数据整形 -----------------------------
 def translate_page_url(original_url):
-    """用 Google 翻译的网页代理把英文原文整页翻译成中文；只在原文确实是英文时生成。"""
+    """使用DeepSeek API翻译网页内容的占位符URL。
+
+    实际翻译在用户点击时通过后端API调用完成。
+    返回一个指向翻译服务的URL。
+    """
     if not original_url or not re.match(r"^https?://", original_url):
         return ""
-    return "https://translate.google.com/translate?sl=auto&tl=zh-CN&u=" + urllib.parse.quote(original_url, safe="")
+    # 返回空字符串，前端不显示翻译链接
+    # 翻译功能已集成在标题和摘要中
+    return ""
 
 
 def create_market_insights_section(market_insights):
