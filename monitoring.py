@@ -5,7 +5,7 @@
 
 本模块提供完整的监控和告警功能，用于跟踪系统运行状态、性能指标和数据质量。
 
-主要功能：
+主要功能:
 1. 运行状态监控 - 记录每次任务执行的成功/失败状态
 2. 推送失败告警 - 推送失败时自动触发告警
 3. 数据质量监控 - 跟踪数据完整性和准确性
@@ -13,7 +13,7 @@
 5. 多级别告警 - 支持 INFO/WARNING/ERROR/CRITICAL 四个级别
 6. 指标导出 - 支持导出为 JSON/Prometheus 格式
 
-使用示例：
+使用示例:
     from monitoring import get_monitor, AlertLevel
 
     # 获取监控实例
@@ -32,21 +32,19 @@
     # 导出指标
     monitor.export_metrics("metrics.json")
 
-配置：
-    可通过环境变量配置：
+配置:
+    可通过环境变量配置:
     - MONITOR_ENABLED: 是否启用监控(默认 true)
     - ALERT_WEBHOOK: 告警 webhook URL
     - METRICS_EXPORT_PATH: 指标导出路径
 
-注意事项：
+注意事项:
     - 监控实例是单例模式，全局共享
     - 告警需要配置通知渠道才能实际发送
     - 指标数据存储在内存中，重启后清空
 
 作者: AI Daily Push Team
 版本: 3.0.0
-"""
-5. 健康检查接口
 """
 import datetime
 import json
@@ -292,7 +290,7 @@ def get_perf_tracker() -> PerformanceTracker:
 
 
 def monitor_function(module: str):
-    """装饰器：监控函数执行"""
+    """装饰器:监控函数执行"""
     def decorator(func):
         def wrapper(*args, **kwargs):
             start_time = time.time()
