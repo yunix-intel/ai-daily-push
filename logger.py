@@ -5,7 +5,7 @@
 
 本模块提供完整的结构化日志功能，支持多级别日志、上下文追踪、敏感信息脱敏等企业级特性。
 
-主要功能：
+主要功能:
 1. 结构化日志输出 - JSON 格式，便于日志聚合和分析
 2. 日志级别管理 - DEBUG/INFO/WARNING/ERROR/CRITICAL 五个级别
 3. 日志轮转 - 按日期或文件大小自动轮转，防止日志文件过大
@@ -14,7 +14,7 @@
 6. 性能日志 - 记录函数执行时间和性能指标
 7. 多输出目标 - 支持控制台、文件、远程日志服务
 
-使用示例：
+使用示例:
     from logger import LoggerFactory
 
     # 创建 logger 实例
@@ -36,7 +36,7 @@
     # 敏感信息自动脱敏
     logger.info("API调用", api_key="sk-1234...")  # 只记录前缀
 
-日志格式：
+日志格式:
     {
         "timestamp": "2024-08-31T09:00:00+08:00",
         "level": "INFO",
@@ -46,25 +46,22 @@
         "extra": {"task": "ai_daily"}
     }
 
-配置：
-    通过环境变量配置：
-    - LOG_LEVEL: 日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）
-    - LOG_DIR: 日志目录（默认 ./logs）
-    - LOG_FORMAT: 日志格式（json/text）
-    - LOG_MAX_SIZE: 单个日志文件最大大小（默认 10MB）
-    - LOG_BACKUP_COUNT: 保留的日志文件数量（默认 30）
+配置:
+    通过环境变量配置:
+    - LOG_LEVEL: 日志级别(DEBUG/INFO/WARNING/ERROR/CRITICAL)
+    - LOG_DIR: 日志目录(默认 ./logs)
+    - LOG_FORMAT: 日志格式(json/text)
+    - LOG_MAX_SIZE: 单个日志文件最大大小(默认 10MB)
+    - LOG_BACKUP_COUNT: 保留的日志文件数量(默认 30)
 
-注意事项：
+注意事项:
     - Logger 实例会自动创建日志目录
     - 日志文件按天轮转，保留最近30天
-    - 敏感信息（API Key、密码）会自动脱敏
+    - 敏感信息(API Key、密码)会自动脱敏
     - 生产环境建议使用 INFO 级别，开发环境使用 DEBUG
 
 作者: AI Daily Push Team
 版本: 3.0.0
-"""
-5. 性能日志
-6. 审计日志
 """
 import logging
 import logging.handlers
@@ -134,7 +131,7 @@ class StructuredLogger:
     def _setup_handlers(self):
         """设置日志处理器"""
 
-        # 1. 控制台处理器（人类可读格式）
+        # 1. 控制台处理器(人类可读格式)
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)
         console_formatter = logging.Formatter(
@@ -144,7 +141,7 @@ class StructuredLogger:
         console_handler.setFormatter(console_formatter)
         self.logger.addHandler(console_handler)
 
-        # 2. 文件处理器（JSON格式，按日期轮转）
+        # 2. 文件处理器(JSON格式，按日期轮转)
         json_file = self.log_dir / f"{self.name}.json.log"
         json_handler = logging.handlers.TimedRotatingFileHandler(
             json_file,
@@ -157,7 +154,7 @@ class StructuredLogger:
         json_handler.setFormatter(JsonFormatter())
         self.logger.addHandler(json_handler)
 
-        # 3. 错误日志文件（单独记录ERROR及以上）
+        # 3. 错误日志文件(单独记录ERROR及以上)
         error_file = self.log_dir / f"{self.name}.error.log"
         error_handler = logging.handlers.RotatingFileHandler(
             error_file,
@@ -253,7 +250,7 @@ class LoggerFactory:
 
 
 def log_execution(logger_name: str = None):
-    """装饰器：记录函数执行"""
+    """装饰器:记录函数执行"""
     def decorator(func):
         def wrapper(*args, **kwargs):
             logger = LoggerFactory.get_logger(logger_name or func.__module__)
