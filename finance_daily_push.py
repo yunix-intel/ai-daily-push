@@ -102,6 +102,22 @@ QUOTE_CODES = [
 ]
 
 
+def clean_html_tags(text):
+    """清理HTML标签和实体"""
+    import html as html_module
+
+    # 解码HTML实体
+    text = html_module.unescape(text)
+
+    # 移除HTML标签
+    text = re.sub(r'<[^>]+>', '', text)
+
+    # 清理多余空白
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    return text
+
+
 def fetch_quotes():
     """返回 [{name, price, change, pct}]。单个字段解析失败就跳过该指数，不影响其余。"""
     url = QUOTE_API + ",".join(code for code, _ in QUOTE_CODES)
@@ -208,6 +224,75 @@ def _fetch_rss_with_mirrors(source_name, path, limit=20):
     raise last_exc or RuntimeError(f"{source_name} 所有镜像均失败")
 
 
+def classify_news_category(item):
+    """分类新闻为国内或国际"""
+    text = f"{item.get('title', '')} {item.get('summary', '')}".lower()
+
+    # 国际新闻关键词（优先级高）
+    international_keywords = [
+        '美国', '美联储', '美元', 'fed', 'federal reserve',
+        '欧洲', '欧盟', '欧元', 'ecb', '日本', '日元',
+        '特朗普', 'trump', '拜登', 'biden',
+        '英国', '法国', '德国', 'uk', 'france', 'germany',
+        'wall street', 'nasdaq', 'dow jones', 's&p'
+    ]
+
+    # 国内新闻关键词
+    domestic_keywords = [
+        '中国', '央行', '人民币', 'a股', '沪指', '深成指',
+        '港股', '恒生', '深圳', '上海', '北京',
+        '证监会', '银保监', '发改委', '国务院',
+        '创业板', '科创板', '沪深'
+    ]
+
+    # 先检查国际关键词
+    for kw in international_keywords:
+        if kw in text:
+            return 'international'
+
+    # 再检查国内关键词
+    for kw in domestic_keywords:
+        if kw in text:
+            return 'domestic'
+
+    # 根据来源判断
+    source = item.get('source', '')
+    if any(s in source for s in ['新浪', '第一财经', '财联社', '证券时报', '金十', '财新']):
+        return 'domestic'
+
+    # 默认国际
+    return 'international'
+
+
+def filter_aggregated_news(items):
+    """过滤掉汇总类新闻"""
+    aggregated_keywords = [
+        '今日要闻', '要闻汇总', '早间要闻', '早报',
+        '盘前必读', '财经早报', '今日看点', '盘前提示',
+        '一周回顾', '本周要闻', '周报', '每日资讯'
+    ]
+
+    filtered = []
+    for item in items:
+        title = item.get('title', '')
+        summary = item.get('summary', '')
+
+        # 检查标题
+        is_aggregated = any(kw in title for kw in aggregated_keywords)
+
+        # 检查摘要是否有多个编号（3个以上）
+        numbered_items = re.findall(r'[\d一二三四五六七八九十]+[、．.)）]', summary)
+        if len(numbered_items) >= 3:
+            is_aggregated = True
+
+        if not is_aggregated:
+            filtered.append(item)
+        else:
+            print(f"    [过滤汇总] {title[:40]}...")
+
+    return filtered
+
+
 def fetch_finance_items(hours=24, per_feed=20):
     """抓取全部来源，去重并只保留过去 hours 小时内的条目。按国内/国外分组返回。
 
@@ -236,8 +321,8 @@ def fetch_finance_items(hours=24, per_feed=20):
                 continue
             seen.add(key)
             entry = {
-                "title": title,
-                "summary": (item.get("summary") or "").strip(),
+                "title": clean_html_tags(title),
+                "summary": clean_html_tags((item.get("summary") or "").strip()),
                 "link": item.get("link") or "",
                 "source": source_name,
                 "isEnglish": is_en,
@@ -253,7 +338,30 @@ def fetch_finance_items(hours=24, per_feed=20):
     total = len(collected_zh) + len(collected_en)
     print(f"     超出 {hours} 小时窗口丢弃：{dropped_old} 条")
     print(f"     合计入库：国内 {len(collected_zh)} 条 + 国际 {len(collected_en)} 条 = {total} 条")
-    return {"domestic": collected_zh, "international": collected_en}
+
+    # 重新分类（防止分类错误）
+    print(f"     [2.1] 重新分类新闻...")
+    all_items = collected_zh + collected_en
+    reclassified_domestic = []
+    reclassified_international = []
+
+    for item in all_items:
+        category = classify_news_category(item)
+        if category == 'domestic':
+            reclassified_domestic.append(item)
+        else:
+            reclassified_international.append(item)
+
+    print(f"     重新分类后：国内 {len(reclassified_domestic)} 条，国际 {len(reclassified_international)} 条")
+
+    # 过滤汇总类新闻
+    print(f"     [2.2] 过滤汇总类新闻...")
+    filtered_domestic = filter_aggregated_news(reclassified_domestic)
+    filtered_international = filter_aggregated_news(reclassified_international)
+
+    print(f"     过滤后：国内 {len(filtered_domestic)} 条，国际 {len(filtered_international)} 条")
+
+    return {"domestic": filtered_domestic, "international": filtered_international}
 
 
 def translate_finance_items(items):
