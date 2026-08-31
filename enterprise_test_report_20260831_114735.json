@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-08-31T11:47:35.518731",
+  "summary": {
+    "total": 9,
+    "passed": 8,
+    "failed": 1,
+    "pass_rate": 88.88888888888889
+  },
+  "results": [
+    {
+      "name": "配置管理",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "日志系统",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "监控系统",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "交易日历",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "数据抓取",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "推送配置",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "缓存系统",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "安全性",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "可靠性",
+      "status": "FAIL",
+      "error": "day 29 must be in range 1..28 for month 2 in year 2026"
+    }
+  ]
+}
