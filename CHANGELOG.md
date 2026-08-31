@@ -5,6 +5,24 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复 🐛
+- **推送历史提交失败不再阻断 Pages 发布**（`416f422`）- 08-31 定时运行两份日报
+  都生成成功，却整体标红且页面没更新：运行期间 `main` 被推进了三个提交，
+  runner 上的分支已过期，`git push` 被拒 →「提交推送历史」失败 →
+  「准备 Pages 静态产物」「上传 Pages 产物」与 `deploy` job 全部跳过。
+  改为先 `rebase` 再推、最多重试 3 次；最终仍失败只留 `::warning::`，
+  配合 `continue-on-error` 不失败整个 job。
+  同时修掉一处未触发的隐患：原条件用 `git diff --quiet` 检测**未暂存**改动，
+  而两个 dashboard html 每次运行都会被重写、该条件几乎恒为真，
+  只要 `push_history.json` 本身没变就会走到一个无暂存内容的 `git commit`
+  （退出码 1），同样会拖红整个 job。
+
+> 仅 CI 配置变更，不涉及任何被 import 或部署的代码，故不单独发版；
+> 本仓库的 tag 不驱动任何自动化（workflow 由 `schedule` 触发、跑的是 `main`），
+> 该修复推送到 `main` 即已生效。
+
 ## [3.1.0] - 2026-08-31
 
 ### 新增 🎉
