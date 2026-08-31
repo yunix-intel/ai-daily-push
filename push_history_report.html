@@ -87,15 +87,15 @@
 
         <div class="metrics">
             <div class="metric">
-                <div class="metric-value">2</div>
+                <div class="metric-value">3</div>
                 <div class="metric-label">总推送次数</div>
             </div>
             <div class="metric">
-                <div class="metric-value">188.7分</div>
+                <div class="metric-value">195.0分</div>
                 <div class="metric-label">平均延迟</div>
             </div>
             <div class="metric">
-                <div class="metric-value">199.8分</div>
+                <div class="metric-value">207.4分</div>
                 <div class="metric-label">最大延迟</div>
             </div>
             <div class="metric">
@@ -123,6 +123,13 @@
                 
                 <tr>
                     <td>2026-08-31</td>
+                    <td>03:27:26</td>
+                    <td>2026-08-31T00:00:00+00:00</td>
+                    <td class="delay-high">207.4 分钟</td>
+                </tr>
+            
+                <tr>
+                    <td>2026-08-31</td>
                     <td>03:19:49</td>
                     <td>2026-08-31T00:00:00+00:00</td>
                     <td class="delay-high">199.8 分钟</td>
@@ -139,12 +146,12 @@
         </table>
 
         <p style="margin-top: 30px; color: #666; font-size: 14px;">
-            最后更新: 2026-08-31 03:19:49
+            最后更新: 2026-08-31 03:27:26
         </p>
     </div>
 
     <script>
-        const chartData = [{"date": "2026-08-31", "delay": 177.7}, {"date": "2026-08-31", "delay": 199.8}];
+        const chartData = [{"date": "2026-08-31", "delay": 177.7}, {"date": "2026-08-31", "delay": 199.8}, {"date": "2026-08-31", "delay": 207.4}];
 
         const ctx = document.getElementById('delayChart').getContext('2d');
         new Chart(ctx, {
