@@ -1,0 +1,2 @@
+{"timestamp": "2026-08-31T08:07:09.083581", "level": "INFO", "logger": "test_logger", "message": "测试日志", "module": "logger", "function": "_log", "line": 132, "trace_id": "0fe8a9ce-fb85-4647-a2e2-8240eb25b64d", "extra": {"test_key": "test_value"}}
+{"timestamp": "2026-08-31T08:07:09.083832", "level": "INFO", "logger": "test_logger", "message": "Performance: test_operation", "module": "logger", "function": "_log", "line": 132, "trace_id": "0fe8a9ce-fb85-4647-a2e2-8240eb25b64d", "extra": {"duration": 1.5}}

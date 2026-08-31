@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-08-31T08:07:09.707741",
+  "summary": {
+    "total": 9,
+    "passed": 7,
+    "failed": 2,
+    "pass_rate": 77.77777777777779
+  },
+  "results": [
+    {
+      "name": "配置管理",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "日志系统",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "监控系统",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "交易日历",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "数据抓取",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "推送配置",
+      "status": "FAIL",
+      "error": "配置验证失败:\n  - 必须配置至少一种推送渠道（企业微信或PushPlus）\n  - LLM API Key 未配置"
+    },
+    {
+      "name": "缓存系统",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "安全性",
+      "status": "PASS",
+      "error": null
+    },
+    {
+      "name": "可靠性",
+      "status": "FAIL",
+      "error": "day 29 must be in range 1..28 for month 2 in year 2026"
+    }
+  ]
+}
