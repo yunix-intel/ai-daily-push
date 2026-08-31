@@ -25,7 +25,8 @@ LLM 配置（支持自建 OpenAI 兼容网关）：
   python finance_daily_push.py --no-push  # 只生成网页，不推送（调试）
 """
 import json, os, re, sys, urllib.parse, urllib.request, urllib.error
-from datetime import datetime, timezone, timedelta
+import datetime as dt_module
+from datetime import datetime, timezone, timedelta, date
 from email.utils import parsedate_to_datetime
 
 # 导入监控装饰器
@@ -969,7 +970,7 @@ def main():
                      or cfg.get("finance_dashboard_url", "")).strip()
 
     # 根据交易日状态自动调整数据收集时间范围
-    today = datetime.date.today()
+    today = date.today()
     trading_status = get_trading_status(today, market='A')
 
     if args.hours is None:
