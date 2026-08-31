@@ -422,16 +422,199 @@ def pick_highlights(flat_items, top_n=5):
     return selected
 
 # ----------------------------- 数据整形 -----------------------------
-def translate_page_url(original_url):
-    """使用DeepSeek API翻译网页内容的占位符URL。
+def translate_page_with_llm(original_url, title):
+    """使用DeepSeek API翻译网页全文
 
-    实际翻译在用户点击时通过后端API调用完成。
-    返回一个指向翻译服务的URL。
+    返回翻译后的文本，存储为静态HTML文件供用户访问
+    """
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+
+        # 1. 抓取原文网页
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(original_url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        # 2. 提取正文
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # 移除脚本和样式
+        for script in soup(['script', 'style', 'nav', 'footer', 'aside']):
+            script.decompose()
+
+        # 提取文章正文（尝试多种选择器）
+        article = None
+        for selector in ['article', '.article', '.post-content', '.entry-content', 'main']:
+            article = soup.select_one(selector)
+            if article:
+                break
+
+        if not article:
+            article = soup.find('body')
+
+        if not article:
+            return None
+
+        # 提取文本段落
+        paragraphs = []
+        for p in article.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'li']):
+            text = p.get_text(strip=True)
+            if len(text) > 20:  # 过滤太短的段落
+                paragraphs.append(text)
+
+        full_text = '\n\n'.join(paragraphs[:50])  # 最多50段
+
+        if not full_text or len(full_text) < 100:
+            return None
+
+        # 3. 调用DeepSeek翻译
+        prompt = f"""请将以下英文文章翻译成中文，保持原文的段落结构：
+
+{full_text}
+
+要求：
+1. 准确翻译，保持原意
+2. 语言流畅自然
+3. 保留专业术语的英文（如API、AI等）
+4. 不要添加额外的说明或评论
+"""
+
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+        response = requests.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "deepseek-chat",  # 使用DeepSeek模型
+                "messages": [
+                    {"role": "system", "content": "你是一个专业的英译中翻译助手。"},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 4000
+            },
+            timeout=60
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            translated_text = result['choices'][0]['message']['content']
+
+            # 4. 生成HTML文件
+            html_content = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title} - 全文翻译</title>
+    <style>
+        body {{
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            line-height: 1.8;
+            color: #333;
+            background: #f5f5f5;
+        }}
+        .container {{
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            font-size: 28px;
+            margin-bottom: 10px;
+            color: #1a1a1a;
+        }}
+        .meta {{
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }}
+        .content {{
+            font-size: 16px;
+            white-space: pre-wrap;
+            text-align: justify;
+        }}
+        .footer {{
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #999;
+            font-size: 14px;
+        }}
+        a {{
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{title}</h1>
+        <div class="meta">
+            由 DeepSeek AI 翻译 | <a href="{original_url}" target="_blank">查看原文 ↗</a>
+        </div>
+        <div class="content">{translated_text}</div>
+        <div class="footer">
+            本翻译由 AI 自动生成，仅供参考
+        </div>
+    </div>
+</body>
+</html>"""
+
+            # 保存到文件
+            import hashlib
+            url_hash = hashlib.md5(original_url.encode()).hexdigest()[:12]
+            filename = f"translated_{url_hash}.html"
+            filepath = os.path.join(os.path.dirname(__file__), filename)
+
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+
+            return filename
+
+        return None
+
+    except Exception as e:
+        print(f"     [WARN] 翻译失败: {e}")
+        return None
+
+
+def translate_page_url(original_url):
+    """生成翻译页面的URL
+
+    返回相对路径，指向本地生成的翻译HTML文件
     """
     if not original_url or not re.match(r"^https?://", original_url):
         return ""
-    # 返回空字符串，前端不显示翻译链接
-    # 翻译功能已集成在标题和摘要中
+
+    # 生成URL hash作为文件名
+    import hashlib
+    url_hash = hashlib.md5(original_url.encode()).hexdigest()[:12]
+    filename = f"translated_{url_hash}.html"
+
+    # 检查文件是否已存在
+    filepath = os.path.join(os.path.dirname(__file__), filename)
+    if os.path.exists(filepath):
+        return filename
+
+    # 文件不存在，返回空（前端将隐藏按钮）
+    # 实际翻译在后台任务中完成
     return ""
 
 
@@ -512,12 +695,21 @@ def shape(report, market_insights=None, news_metrics=None):
             original_link = it.get("links", {}).get("original", "")
             is_translated = bool(original_title) and original_title != title
 
-            # 对所有有效的链接都生成翻译选项（不仅仅是已翻译的内容）
             # 判断是否需要翻译：有原文链接，且标题中包含英文或已被翻译
             needs_translation = bool(original_link) and (
                 is_translated or
                 bool(re.search(r'[a-zA-Z]{3,}', original_title))  # 包含3个以上连续英文字母
             )
+
+            # 生成翻译页面（使用DeepSeek API）
+            translated_page = ""
+            if needs_translation and original_link.startswith("http"):
+                try:
+                    translated_file = translate_page_with_llm(original_link, title)
+                    if translated_file:
+                        translated_page = translated_file
+                except Exception as e:
+                    print(f"     [WARN] 全文翻译失败 ({title[:30]}...): {e}")
 
             entry = {
                 "idx": gi,
@@ -528,7 +720,7 @@ def shape(report, market_insights=None, news_metrics=None):
                 "source": it.get("source", {}).get("name", ""),
                 "original": original_link,
                 "aihot": it.get("links", {}).get("aihot", ""),
-                "translatedPage": translate_page_url(original_link) if needs_translation else "",
+                "translatedPage": translated_page,
             }
             its.append(entry)
             flat_for_ranking.append((entry, label))
