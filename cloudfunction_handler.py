@@ -46,6 +46,27 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 
+# 北京时区常量（UTC+8）
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def format_beijing_time(dt: datetime, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """
+    将 UTC 时间转换为北京时间字符串
+
+    Args:
+        dt: UTC datetime 对象
+        fmt: 格式化字符串
+
+    Returns:
+        北京时间字符串（带时区标注）
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    beijing_dt = dt.astimezone(BEIJING_TZ)
+    return beijing_dt.strftime(fmt) + " (北京时间)"
+
+
 def main_handler(event, context):
     """
     云函数入口（腾讯云）
@@ -180,6 +201,8 @@ def main_handler(event, context):
 
             print(f"最近运行:")
             print(f"  运行编号: {latest_run.get('run_number')}")
+            print(f"  预期时间: {format_beijing_time(expected_time)}")
+            print(f"  实际时间: {format_beijing_time(started_time)}")
             print(f"  延迟: {delay_seconds:.0f} 秒 ({delay_seconds/60:.1f} 分钟)")
             print(f"  状态: {conclusion}")
 
@@ -191,8 +214,8 @@ def main_handler(event, context):
                     {
                         "仓库": repo,
                         "运行编号": latest_run.get('run_number'),
-                        "预期时间": expected_time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "实际时间": started_time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "预期时间": format_beijing_time(expected_time),
+                        "实际时间": format_beijing_time(started_time),
                         "延迟": f"{delay_seconds:.0f}秒",
                         "状态": conclusion,
                         "链接": latest_run.get('html_url', '')

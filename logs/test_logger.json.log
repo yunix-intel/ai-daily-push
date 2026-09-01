@@ -1,2 +1,6 @@
-{"timestamp": "2026-08-31T08:07:09.083581", "level": "INFO", "logger": "test_logger", "message": "测试日志", "module": "logger", "function": "_log", "line": 132, "trace_id": "0fe8a9ce-fb85-4647-a2e2-8240eb25b64d", "extra": {"test_key": "test_value"}}
-{"timestamp": "2026-08-31T08:07:09.083832", "level": "INFO", "logger": "test_logger", "message": "Performance: test_operation", "module": "logger", "function": "_log", "line": 132, "trace_id": "0fe8a9ce-fb85-4647-a2e2-8240eb25b64d", "extra": {"duration": 1.5}}
+{"timestamp": "2026-09-01T11:00:35.359399", "level": "INFO", "logger": "test_logger", "message": "Info message", "module": "logger", "function": "_log", "line": 184, "extra": {}}
+{"timestamp": "2026-09-01T11:00:35.369625", "level": "WARNING", "logger": "test_logger", "message": "Warning message", "module": "logger", "function": "_log", "line": 184, "extra": {}}
+{"timestamp": "2026-09-01T11:00:35.370574", "level": "ERROR", "logger": "test_logger", "message": "Error message", "module": "logger", "function": "_log", "line": 184, "extra": {}}
+{"timestamp": "2026-09-01T11:03:04.732468", "level": "INFO", "logger": "test_logger", "message": "Info message", "module": "logger", "function": "_log", "line": 184, "extra": {}}
+{"timestamp": "2026-09-01T11:03:04.739017", "level": "WARNING", "logger": "test_logger", "message": "Warning message", "module": "logger", "function": "_log", "line": 184, "extra": {}}
+{"timestamp": "2026-09-01T11:03:04.743434", "level": "ERROR", "logger": "test_logger", "message": "Error message", "module": "logger", "function": "_log", "line": 184, "extra": {}}

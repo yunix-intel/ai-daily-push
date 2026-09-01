@@ -46,6 +46,42 @@ import urllib.error
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Any
 import base64
+from zoneinfo import ZoneInfo
+
+
+# 北京时区（UTC+8）
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def utc_to_beijing(dt: datetime) -> datetime:
+    """
+    将 UTC 时间转换为北京时间
+
+    Args:
+        dt: UTC 时间（aware datetime）
+
+    Returns:
+        北京时间（aware datetime）
+    """
+    if dt.tzinfo is None:
+        # 如果是 naive datetime，假定为 UTC
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BEIJING_TZ)
+
+
+def format_beijing_time(dt: datetime, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """
+    格式化为北京时间字符串
+
+    Args:
+        dt: datetime 对象
+        fmt: 格式化字符串
+
+    Returns:
+        北京时间字符串（带时区标注）
+    """
+    beijing_dt = utc_to_beijing(dt)
+    return beijing_dt.strftime(fmt) + " (北京时间)"
 
 
 class GitHubMonitor:
@@ -171,8 +207,8 @@ class GitHubMonitor:
                 delays.append({
                     "run_id": run.get("id"),
                     "run_number": run.get("run_number"),
-                    "created_at": created_at,
-                    "started_at": run_started_at,
+                    "created_at": format_beijing_time(created_time),  # 转为北京时间
+                    "started_at": format_beijing_time(started_time),  # 转为北京时间
                     "delay_seconds": delay_seconds,
                     "conclusion": conclusion,
                     "html_url": run.get("html_url")
@@ -350,7 +386,7 @@ class GitHubMonitor:
         </table>
 
         <p style="margin-top: 30px; color: #666; font-size: 14px;">
-            报告生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            报告生成时间: {format_beijing_time(datetime.now(timezone.utc))}
         </p>
     </div>
 </body>
