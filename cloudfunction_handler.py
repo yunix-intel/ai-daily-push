@@ -26,9 +26,9 @@
 - GITHUB_REPOSITORY: 仓库名（必需，如 owner/repo）
 - GITHUB_TOKEN: GitHub Token（可选）
 - GITHUB_WORKFLOW: Workflow 名称（可选）
-- EXPECTED_RUN_TIME: 预期运行时间（格式 HH:MM，默认 00:00）。
-  * 默认按 **UTC 时间** 解析（本项目定时 cron 是 UTC 00:00）
-  * 若设置了 EXPECTED_TIMEZONE，则按该时区解析（如 Asia/Shanghai 则填 08:00）
+- EXPECTED_RUN_TIME: 预期运行时间（格式 HH:MM，默认 23:23）。
+  * 默认按 **UTC 时间** 解析（本项目定时 cron 是 UTC 23:23 = 北京时间次日 07:23）
+  * 若设置了 EXPECTED_TIMEZONE，则按该时区解析（如 Asia/Shanghai 则填 07:23）
 - EXPECTED_TIMEZONE: 可选，时区名（如 Asia/Shanghai）。设置后 EXPECTED_RUN_TIME 按此时区解析
 - DELAY_THRESHOLD: 延迟阈值秒数（默认 600）
 - ALERT_WECOM_WEBHOOK: 企业微信 Webhook
@@ -93,7 +93,7 @@ def main_handler(event, context):
         repo = os.environ.get('GITHUB_REPOSITORY', '')
         token = os.environ.get('GITHUB_TOKEN', '')
         workflow = os.environ.get('GITHUB_WORKFLOW', '')
-        expected_time_str = os.environ.get('EXPECTED_RUN_TIME', '00:00')
+        expected_time_str = os.environ.get('EXPECTED_RUN_TIME', '23:23')  # UTC 23:23 = 北京时间次日 07:23
         expected_tz_str = os.environ.get('EXPECTED_TIMEZONE', '')
         threshold = int(os.environ.get('DELAY_THRESHOLD', 600))
 
