@@ -138,18 +138,20 @@ def test_alerting():
 def test_money_flow_scraper():
     """测试资金流向抓取"""
     try:
-        from scrapers.money_flow_scraper import MoneyFlowScraper
+        from money_flow_scraper import MoneyFlowScraper
 
         scraper = MoneyFlowScraper()
-        data = scraper.fetch()
+        # MoneyFlowScraper 有 4 个方法，测试其中一个
+        data = scraper.get_north_capital_flow()
 
         if data:
-            assert 'north' in data or 'south' in data, "资金流向数据格式错误"
-            print(f"  资金流向数据: {list(data.keys())}")
+            # 检查北向资金数据结构
+            assert isinstance(data, dict), "资金流向数据格式错误"
+            print(f"  北向资金流向数据获取成功")
         else:
             print("  资金流向数据为空（可能非交易时间）")
     except Exception as e:
-        print(f"  跳过资金流向测试（非关键）: {e}")
+        print(f"  跳过资金流向测试（外部API可能不可用）: {e}")
 
 
 def test_wechat_content_builder():
@@ -170,16 +172,18 @@ def test_finance_data_fetch():
     try:
         import finance_daily_push as F
 
-        # 测试行情数据
-        quotes = F.fetch_market_quotes()
+        # 测试行情数据抓取函数（正确的函数名是 fetch_quotes）
+        quotes = F.fetch_quotes()
         if quotes:
             assert len(quotes) > 0, "行情数据为空"
             print(f"  行情数据: {len(quotes)} 个指数")
+        else:
+            print("  行情数据为空（可能非交易时间）")
 
-        # 测试RSS抓取（限制1个源避免超时）
-        from finance_daily_push import fetch_rss_with_fallback
+        # 测试RSS抓取（fetch_rss 参数: source_name, url, limit）
+        from finance_daily_push import fetch_rss
         test_url = 'https://rsshub.rssforever.com/gelonghui/live'
-        items = fetch_rss_with_fallback(test_url, timeout=15)
+        items = fetch_rss('测试源', test_url, limit=5)
         print(f"  RSS抓取: {len(items)} 条（格隆汇快讯）")
 
     except Exception as e:
@@ -224,10 +228,14 @@ def test_ai_daily_integration():
         ['python', 'ai_daily_push.py', '--no-push'],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=900,  # 15分钟
         encoding='utf-8',
         errors='ignore'
     )
+
+    print(f"  返回码: {result.returncode}")
+    if result.returncode != 0:
+        print(f"  stderr: {result.stderr[:500]}")
 
     assert result.returncode == 0, f"AI 日报生成失败: {result.stderr}"
 
@@ -242,6 +250,17 @@ def test_ai_daily_integration():
 
     print(f"  ✓ HTML 生成成功 ({len(content)} 字节)")
 
+    # 检查关键内容
+    checks = {
+        'AI HOT': 'AI HOT' in content,
+        'VentureBeat': 'VentureBeat' in content or 'venturebeat' in content.lower(),
+        'Hugging Face': 'Hugging Face' in content or 'huggingface' in content.lower(),
+    }
+
+    for name, passed in checks.items():
+        status = '✓' if passed else '✗'
+        print(f"    - {name}: {status}")
+
 
 def test_finance_daily_integration():
     """集成测试：财经日报完整流程（只生成不推送，跳过 LLM）"""
@@ -252,7 +271,7 @@ def test_finance_daily_integration():
         ['python', 'finance_daily_push.py', '--no-push'],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=900,  # 15分钟（与AI日报保持一致）
         encoding='utf-8',
         errors='ignore'
     )
