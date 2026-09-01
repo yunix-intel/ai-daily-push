@@ -96,3 +96,6 @@ covers/
 !static/*.png
 !static/*.jpg
 !static/*.jpeg
+
+# 本地开发配置
+.claude/launch.json
