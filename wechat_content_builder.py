@@ -151,7 +151,7 @@ def html_to_wechat_article(html_content, title, dashboard_url=""):
 
     <section style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
         <p style="color: #999; font-size: 13px; text-align: center;">
-            每日 8:00 自动更新 | 多来源聚合 | AI 精选推荐
+            每日 7:23 自动更新 | 多来源聚合 | AI 精选推荐
         </p>
     </section>
 </section>
@@ -219,7 +219,7 @@ def html_to_wechat_finance_article(html_content, title, dashboard_url=""):
 
     <section style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
         <p style="color: #999; font-size: 13px; text-align: center;">
-            每日 8:00 自动更新 | 多来源聚合 | LLM 智能分析
+            每日 7:23 自动更新 | 多来源聚合 | LLM 智能分析
         </p>
         <p style="color: #999; font-size: 12px; text-align: center; margin-top: 5px;">
             ⚠️ 本内容仅供参考，不构成投资建议
