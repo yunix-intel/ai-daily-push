@@ -8,18 +8,20 @@
 
 功能：
 1. 记录每次推送的实际时间
-2. 计算相对于预期时间（08:00）的延迟
+2. 计算相对于预期时间（UTC 23:23 = 北京时间次日 07:23）的延迟
 3. 生成可视化 HTML 报告
 4. 部署到 GitHub Pages，随时查看
+
+时间约定：
+- 内部计算与 JSON 存储统一用 UTC
+- 所有给人看的输出（控制台、HTML 报告）都转成北京时间并标注
 
 使用方式：
 在 GitHub Actions 中添加步骤：
 
 ```yaml
 - name: Record push time
-  run: python push_history_recorder.py
-  env:
-    EXPECTED_TIME: "08:00"
+  run: python push_history_recorder.py --expected-time "23:23"
 ```
 
 生成的报告会包含：
@@ -31,8 +33,46 @@
 """
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
+from zoneinfo import ZoneInfo
+
+
+# 北京时区常量（UTC+8）
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+# 预期时间归属的判定窗口。每日任务的合理延迟远小于 12 小时，
+# 所以偏差超过这个窗口就说明预期时间算到了错误的那一天。
+DAY_ROLLOVER_WINDOW = timedelta(hours=12)
+
+
+def to_beijing(dt: datetime, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """转成北京时间字符串，不加标注。
+
+    用于表格单元格等由表头统一标注时区的场合。
+
+    Args:
+        dt: datetime 对象，无时区信息时按 UTC 处理
+        fmt: 格式化字符串
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BEIJING_TZ).strftime(fmt)
+
+
+def format_beijing_time(dt: datetime, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """转成北京时间字符串并标注时区。
+
+    用于控制台输出等需要自带时区说明的场合。
+
+    Args:
+        dt: datetime 对象，无时区信息时按 UTC 处理
+        fmt: 格式化字符串
+
+    Returns:
+        北京时间字符串，末尾带 " (北京时间)"
+    """
+    return to_beijing(dt, fmt) + " (北京时间)"
 
 
 class PushHistoryRecorder:
@@ -67,22 +107,18 @@ class PushHistoryRecorder:
         except Exception as e:
             print(f"保存历史记录失败: {e}")
 
-    def record_push(self, expected_time: str = "08:00", task_name: str = "AI Daily Push"):
+    def record_push(self, expected_time: str = "23:23", task_name: str = "AI Daily Push"):
         """
         记录本次推送
 
         Args:
-            expected_time: 预期推送时间（HH:MM）
+            expected_time: 预期推送时间（HH:MM，按 UTC 解析）。
+                默认 23:23 对应 workflow 的 cron，即北京时间次日 07:23。
             task_name: 任务名称
         """
         now = datetime.now(timezone.utc)
 
-        # 计算预期时间
-        expected_hour, expected_minute = map(int, expected_time.split(':'))
-        expected_dt = datetime.combine(
-            now.date(),
-            datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
-        ).replace(tzinfo=timezone.utc)
+        expected_dt = self._resolve_expected_dt(now, expected_time)
 
         # 计算延迟
         delay_seconds = (now - expected_dt).total_seconds()
@@ -95,7 +131,10 @@ class PushHistoryRecorder:
             "delay_seconds": delay_seconds,
             "delay_minutes": round(delay_seconds / 60, 1),
             "date": now.strftime("%Y-%m-%d"),
-            "actual_time": now.strftime("%H:%M:%S")
+            "actual_time": now.strftime("%H:%M:%S"),
+            # 给人看的字段。原 UTC 字段保留不动，历史记录才能继续渲染。
+            "actual_time_bj": format_beijing_time(now),
+            "expected_time_bj": format_beijing_time(expected_dt),
         }
 
         self.history.append(record)
@@ -107,11 +146,43 @@ class PushHistoryRecorder:
 
         print(f"✓ 记录推送时间:")
         print(f"  日期: {record['date']}")
-        print(f"  实际时间: {record['actual_time']} UTC")
-        print(f"  预期时间: {expected_time}")
+        print(f"  实际时间: {record['actual_time_bj']}")
+        print(f"  预期时间: {record['expected_time_bj']}")
         print(f"  延迟: {record['delay_minutes']} 分钟")
 
         return record
+
+    @staticmethod
+    def _resolve_expected_dt(now: datetime, expected_time: str) -> datetime:
+        """把 HH:MM 解析成正确那一天的 UTC 预期时间。
+
+        cron 定在 UTC 23:23，紧贴 UTC 午夜。两份日报生成完再记账时，
+        now.date() 常常已经翻到次日，直接拿它拼预期时间会算出
+        「提前 23 小时」这种负延迟。所以按偏差方向把日期校正回去：
+        偏差超过 12 小时，就说明预期时间归属的是相邻的那一天。
+
+        Args:
+            now: 当前 UTC 时间
+            expected_time: 预期时间（HH:MM，UTC）
+
+        Returns:
+            校正后的 UTC 预期时间
+        """
+        expected_hour, expected_minute = map(int, expected_time.split(':'))
+        expected_dt = datetime.combine(
+            now.date(),
+            datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
+        ).replace(tzinfo=timezone.utc)
+
+        diff = now - expected_dt
+        if diff < -DAY_ROLLOVER_WINDOW:
+            # 预期时间落在了未来太远处：真正的预期时间是前一天
+            expected_dt -= timedelta(days=1)
+        elif diff > DAY_ROLLOVER_WINDOW:
+            # 预期时间落在了过去太远处：真正的预期时间是后一天
+            expected_dt += timedelta(days=1)
+
+        return expected_dt
 
     def generate_report(self, output_file: str = "push_history_report.html"):
         """
@@ -157,11 +228,18 @@ class PushHistoryRecorder:
                           "delay-medium" if record["delay_seconds"] > 300 else \
                           "delay-low"
 
+            # 统一从 UTC 源字段现算，旧记录（无 _bj 字段）无需分支；
+            # 时区由表头统一标注，单元格不重复带后缀
+            actual_bj = to_beijing(
+                datetime.fromisoformat(record["timestamp"]), "%H:%M:%S")
+            expected_bj = to_beijing(
+                datetime.fromisoformat(record["expected_time"]), "%H:%M:%S")
+
             rows += f"""
                 <tr>
                     <td>{record["date"]}</td>
-                    <td>{record["actual_time"]}</td>
-                    <td>{record["expected_time"]}</td>
+                    <td>{actual_bj}</td>
+                    <td>{expected_bj}</td>
                     <td class="{delay_class}">{record["delay_minutes"]} 分钟</td>
                 </tr>
             """
@@ -292,8 +370,8 @@ class PushHistoryRecorder:
             <thead>
                 <tr>
                     <th>日期</th>
-                    <th>实际时间 (UTC)</th>
-                    <th>预期时间 (UTC)</th>
+                    <th>实际时间 (北京时间)</th>
+                    <th>预期时间 (北京时间)</th>
                     <th>延迟</th>
                 </tr>
             </thead>
@@ -362,7 +440,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="推送时间历史记录器")
-    parser.add_argument("--expected-time", default="08:00", help="预期推送时间（HH:MM）")
+    parser.add_argument("--expected-time", default="23:23",
+                        help="预期推送时间（HH:MM，UTC）。默认对应 workflow 的 cron UTC 23:23 = 北京时间次日 07:23")
     parser.add_argument("--task", default="AI Daily Push", help="任务名称")
     parser.add_argument("--report", default="push_history_report.html", help="报告输出路径")
     parser.add_argument("--no-record", action="store_true", help="不记录本次，只生成报告")
