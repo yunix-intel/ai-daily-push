@@ -4,11 +4,12 @@
 AI Daily Push 版本信息
 """
 
-__version__ = "3.1.0"
-__version_info__ = (3, 1, 0)
+__version__ = "3.1.1"
+__version_info__ = (3, 1, 1)
 
 # 版本历史
 VERSION_HISTORY = {
+    "3.1.1": "测试修复版本：修复所有测试参数类型错误，达成100%通过率（31/31测试）",
     "3.1.0": "内容质量版本：核心必读排序、假期要闻回顾、资金流向、全文翻译、LLM 分批容错",
     "3.0.1": "修复版本：monitoring/logger 语法错误、finance_daily_push datetime 作用域",
     "3.0.0": "企业级改进版本：监控系统、并发优化、配置验证、告警通知、GitHub推送监测",
