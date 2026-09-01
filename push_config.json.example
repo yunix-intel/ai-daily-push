@@ -1,13 +1,24 @@
 {
-  "wecom": {
-    "webhook_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_WECOM_KEY"
-  },
-  "feishu": {
-    "webhook_url": ""
-  },
+  "_说明": "推送渠道优先级：飞书群机器人(FEISHU_WEBHOOK) > 企业微信群机器人(WECOM_WEBHOOK) > 企业微信应用消息 > pushplus。群机器人均无需 IP 白名单。dashboard_url 是 AI 日报网页，finance_dashboard_url 是财经日报网页。wechat_official 是微信公众号配置，enabled 设为 true 启用自动发布（需先配置 appid 和 appsecret，也可通过环境变量 WECHAT_APPID 和 WECHAT_APPSECRET 配置）。财经日报的 LLM 配置：openai_base_url 填自建 OpenAI 兼容网关地址（如 https://aiapi.hk.oliga.top/v1）；openai_model_translate 默认 deepseek-v4-flash（批量翻译，便宜快）；openai_model_analysis 默认 gpt-5.6-sol（总结/分析/策略，需要推理能力）。生产环境密钥用 OPENAI_API_KEY Secret，不要写进本文件。bloggers 配置财经博主追踪，uid 是 blog.sina.com.cn/u/<uid> 里那串数字。",
+
+  "wecom_webhook": "",
+  "feishu_webhook": "",
+  "dashboard_url": "",
+  "finance_dashboard_url": "",
+
   "wechat_official": {
-    "appid": "wx1234567890abcdef",
-    "appsecret": "your_32_character_appsecret_here",
+    "appid": "",
+    "appsecret": "",
     "enabled": false
-  }
+  },
+
+  "openai_base_url": "",
+  "openai_api_key": "",
+  "openai_model_translate": "deepseek-v4-flash",
+  "openai_model_analysis": "gpt-5.6-sol",
+
+  "bloggers": [
+    {"name": "徐小明", "uid": "1300871220"}
+  ]
 }
+
