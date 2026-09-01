@@ -381,7 +381,7 @@ class PushHistoryRecorder:
         </table>
 
         <p style="margin-top: 30px; color: #666; font-size: 14px;">
-            最后更新: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            最后更新: {format_beijing_time(datetime.now(timezone.utc))}
         </p>
     </div>
 
