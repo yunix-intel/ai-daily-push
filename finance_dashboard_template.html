@@ -61,6 +61,20 @@
   .mustread .mr-t{flex:1;font-size:14px;font-weight:600;line-height:1.5;text-align:justify}
   .mustread .mr-t a:hover{color:var(--accent)}
   .mustread .mr-s{font-size:12px;color:var(--muted);white-space:nowrap}
+  .blogger{border-left:3px solid var(--accent)}
+  .blogger .bg-hd{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:8px}
+  .blogger .bg-nm{font-size:15px;font-weight:800}
+  .blogger .bg-tone{font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px;background:var(--bg2);border:1px solid var(--border);color:var(--muted)}
+  .blogger .bg-tone.up{color:var(--up);border-color:var(--up)}
+  .blogger .bg-tone.down{color:var(--down);border-color:var(--down)}
+  .blogger .bg-view{font-size:14px;line-height:1.75;text-align:justify}
+  .blogger .bg-focus{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+  .blogger .bg-focus span{font-size:12px;padding:3px 9px;border-radius:6px;background:var(--bg2);border:1px solid var(--border);color:var(--muted)}
+  .blogger .bg-src{margin-top:10px;padding-top:9px;border-top:1px dashed var(--border);font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+  .blogger .bg-src a{color:var(--muted)}
+  .blogger .bg-src a:hover{color:var(--accent)}
+  .blogger .bg-live{display:inline-block;font-size:10.5px;font-weight:700;color:#1a1109;background:var(--accent);border-radius:4px;padding:1px 5px;margin-right:5px}
+  .bg-note{font-size:12px;color:var(--muted);margin-top:2px;font-style:italic}
   .nav{position:sticky;top:0;z-index:20;background:rgba(14,16,20,.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);margin-top:14px}
   .nav .wrap{display:flex;gap:10px;overflow-x:auto;padding:12px 18px;scrollbar-width:thin}
   .nav a{flex:0 0 auto;font-size:13.5px;color:var(--muted);border:1px solid var(--border);background:var(--bg2);padding:7px 13px;border-radius:999px;white-space:nowrap;transition:.15s}
@@ -139,8 +153,48 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   if(sg.risk) sb+='<div class="risk">'+esc(sg.risk)+'</div>';
   if(sb){document.getElementById('strategyBlock').style.display='';document.getElementById('strategyBody').innerHTML=sb;}
   let nav='<a href="#domestic-section">国内要闻<b>'+meta.domesticCount+'</b></a><a href="#intl-section">国际要闻<b>'+meta.internationalCount+'</b></a>';
+  const bloggerViews=DATA.bloggerViews||[];
+  if(bloggerViews.length) nav+='<a href="#blogger-section">博主观点<b>'+bloggerViews.length+'</b></a>';
   document.getElementById('navLinks').innerHTML=nav;
   let main='';
+
+  // 追踪博主观点。刻意放在要闻之前、策略之后：这是个人判断不是事实，
+  // 读者应该先看完客观信息再看别人怎么想；但它又比逐条快讯更浓缩，
+  // 所以不埋到页面底部。每人独立成块，绝不合并成「市场共识」。
+  if(bloggerViews.length){
+    main+='<div class="market-divider" id="blogger-section"><h2>👤 追踪博主观点<span class="badge">'+bloggerViews.length+' 位</span></h2></div>';
+    bloggerViews.forEach(b=>{
+      const toneCls = b.tone==='偏积极' ? 'up' : (b.tone==='偏谨慎' ? 'down' : '');
+      main+='<div class="block blogger">';
+      main+='<div class="bg-hd"><span class="bg-nm">'+esc(b.name||'')+'</span>';
+      if(b.tone) main+='<span class="bg-tone '+toneCls+'">'+esc(b.tone)+'</span>';
+      main+='</div>';
+      if(b.viewpoint){
+        main+='<div class="bg-view">'+esc(b.viewpoint)+'</div>';
+      }else{
+        main+='<div class="bg-note">观点摘要生成失败，可点击下方原文自行查看。</div>';
+      }
+      const focus=b.focus||[];
+      if(focus.length){
+        main+='<div class="bg-focus">';
+        focus.forEach(f=>{ main+='<span>'+esc(f)+'</span>'; });
+        main+='</div>';
+      }
+      const arts=b.articles||[];
+      if(arts.length){
+        main+='<div class="bg-src">';
+        arts.forEach(a=>{
+          const u=safeUrl(a.url||'');
+          const tag=a.isLive?'<span class="bg-live">直播</span>':'';
+          const t=esc(a.title||'');
+          main+='<div>'+tag+(u&&u!=='#'?'<a href="'+esc(u)+'" target="_blank" rel="noopener noreferrer">'+t+'</a>':t)
+              +' <span style="opacity:.7">'+esc(a.published||'')+'</span></div>';
+        });
+        main+='</div>';
+      }
+      main+='</div>';
+    });
+  }
   function renderMarket(marketData, marketId, marketLabel, badgeColor){
     const events=marketData.emergencyEvents||[];
     const an=marketData.analysis||{};

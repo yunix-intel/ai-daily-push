@@ -989,6 +989,102 @@ STRATEGY_FALLBACK = {
 }
 
 # ----------------------------- 数据整形 -----------------------------
+BLOGGER_SYSTEM = (
+    "你是一名中文财经编辑，负责把知名财经博主的公开博文压缩成观点摘要。"
+    "这些是博主的个人观点，不是事实：转述时必须保持「他认为」的口吻，"
+    "不得把观点写成客观结论，不得编造博文里没有的数字、点位或个股名称。"
+    "禁止输出任何买卖指令或目标价。严格输出 JSON 对象，全部使用简体中文。"
+)
+
+
+def generate_blogger_digest(blogger):
+    """把单个博主 24 小时内的博文压成观点摘要。
+
+    刻意一人一次调用而不是把所有人合成一个 prompt：博主之间观点常常相左，
+    合并后模型容易把几个人的判断揉成一个「市场共识」，那正是最不该产生的东西——
+    读者要看的是「谁说了什么」，不是一份被抹平的平均意见。
+    """
+    articles = blogger.get("articles") or []
+    if not articles:
+        return {}
+
+    blocks = []
+    for art in articles:
+        # 正文截断到 1200 字：盘中直播那类博文会累积成很长的流水账，
+        # 整篇塞进去既顶上下文又稀释重点。
+        content = (art.get("content") or "")[:1200]
+        blocks.append(
+            f"【{art.get('published', '')}】{art.get('title', '')}\n{content}"
+        )
+
+    user_prompt = f"""下面是财经博主「{blogger.get('name', '')}」过去 24 小时发布的博文原文。
+
+{chr(10).join(blocks)}
+
+请输出 JSON：
+{{
+  "viewpoint": "该博主的核心观点，120-200字。用「他认为/他提示」等转述口吻，保留其判断的条件和不确定性，不要替他下结论",
+  "focus": ["他明确提到的关注方向或指标，3-5 项，每项 10 字内"],
+  "tone": "偏谨慎 / 偏积极 / 中性 三选一"
+}}
+
+只能使用上述博文中出现的内容。博文里没提到的板块、点位、个股一律不要出现。
+如果博文只是流水账式的盘中播报、没有明确判断，viewpoint 就如实写「以盘中实时播报为主，未给出明确方向判断」。"""
+
+    analysis_model = _llm_config()[3]
+    return call_llm_json(BLOGGER_SYSTEM, user_prompt, model=analysis_model)
+
+
+def collect_blogger_views(bloggers_cfg, hours=24):
+    """抓取并总结所有配置的博主。任一环节失败都不影响主流程。
+
+    Returns:
+        list[dict]: [{name, url, articles, viewpoint, focus, tone}, ...]
+    """
+    if not bloggers_cfg:
+        return []
+
+    try:
+        from scrapers.blogger_scraper import BloggerScraper
+    except Exception as exc:
+        print(f"     [!] 博主抓取模块加载失败：{exc!r}")
+        return []
+
+    scraper = BloggerScraper()
+    collected = scraper.fetch_all(bloggers_cfg, hours=hours)
+
+    results = []
+    for blogger in collected:
+        entry = {
+            "name": blogger.get("name", ""),
+            "url": f"https://blog.sina.com.cn/u/{blogger.get('uid', '')}",
+            "articles": [
+                {"title": a.get("title", ""), "url": a.get("url", ""),
+                 "published": a.get("published", ""),
+                 # 直播贴要在页面上标出来：它的发布时间是前一交易日，
+                 # 不标的话读者会以为这是条过期内容。
+                 "isLive": bool(a.get("isLive"))}
+                for a in blogger.get("articles", [])
+            ],
+        }
+        try:
+            digest = generate_blogger_digest(blogger) or {}
+            entry["viewpoint"] = (digest.get("viewpoint") or "").strip()
+            entry["focus"] = [str(f).strip() for f in (digest.get("focus") or [])
+                              if str(f).strip()][:5]
+            entry["tone"] = (digest.get("tone") or "").strip()
+        except Exception as exc:
+            # 摘要失败仍保留文章标题和链接：读者至少还能点进去自己看，
+            # 比整块消失强。
+            print(f"     [!] {entry['name']} 观点摘要失败，仅保留标题：{exc!r}")
+            entry["viewpoint"] = ""
+            entry["focus"] = []
+            entry["tone"] = ""
+        results.append(entry)
+
+    return results
+
+
 def translate_page_url(original_url):
     """生成网页翻译链接。Google 翻译服务在某些网络环境下不稳定，禁用翻译链接。
     用户可以直接点击"阅读原文"，浏览器会自动提供翻译功能（Chrome/Edge 内置翻译）。"""
@@ -1003,7 +1099,8 @@ def translate_page_url(original_url):
 
 def shape_finance(sections_domestic, sections_international, quotes, analysis_domestic,
                   analysis_international, strategy, money_flow_data=None, window_hours=24,
-                  must_read_domestic=None, must_read_international=None):
+                  must_read_domestic=None, must_read_international=None,
+                  blogger_views=None):
     """整合国内和国际市场数据，返回完整数据结构。
 
     must_read_*：按 importance_score 选出的「核心必读」条目（原始 item 结构），
@@ -1118,6 +1215,9 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
             "isPostHoliday": bool(strategy.get("is_post_holiday")),
             "lastTradingDay": strategy.get("last_trading_day", ""),
         },
+        # 追踪博主的观点摘要。与 analysis 分开：analysis 是对新闻事实的归纳，
+        # 这里是个人判断，页面上必须让读者一眼看出是「谁的看法」。
+        "bloggerViews": blogger_views or [],
     }
 
 
@@ -1346,6 +1446,24 @@ def main():
     except Exception as exc:
         print(f"     [!] 资金流向抓取失败，继续执行：{exc!r}")
 
+    print("[1.6/6] 抓取追踪博主观点 ...")
+    blogger_views = []
+    # 默认追踪列表。新浪博客是少数还能静态抓取的平台：列表页、时间戳、正文
+    # 全部服务端渲染，无登录无反爬。要加人只需往 push_config.json 的
+    # "bloggers" 里补 {"name": ..., "uid": ...}，uid 是 blog.sina.com.cn/u/<uid>
+    # 里那串数字。
+    bloggers_cfg = cfg.get("bloggers") or [
+        {"name": "徐小明", "uid": "1300871220"},
+    ]
+    try:
+        blogger_views = collect_blogger_views(bloggers_cfg, hours=args.hours)
+        if blogger_views:
+            print(f"     已收录 {len(blogger_views)} 位博主的观点")
+        else:
+            print("     追踪博主在时间窗口内无更新")
+    except Exception as exc:
+        print(f"     [!] 博主观点抓取失败，继续执行：{exc!r}")
+
     print(f"[2/5] 抓取财经快讯（过去 {args.hours} 小时）...")
     items_grouped = fetch_finance_items(hours=args.hours)
 
@@ -1543,7 +1661,8 @@ def main():
                         analysis_domestic, analysis_international, strategy,
                         money_flow_data=money_flow_data, window_hours=args.hours,
                         must_read_domestic=must_read_domestic,
-                        must_read_international=must_read_international)
+                        must_read_international=must_read_international,
+                        blogger_views=blogger_views)
 
     out_html = os.path.join(HERE, "finance_dashboard.html")
     with open(out_html, "w", encoding="utf-8") as f:
