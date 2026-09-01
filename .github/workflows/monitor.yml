@@ -31,7 +31,7 @@ jobs:
         run: |
           python github_monitor.py \
             --repo "${{ github.repository }}" \
-            --workflow "AI Daily Push" \
+            --workflow "每日推送：AI 日报 + 财经日报（企业微信 + GitHub Pages）" \
             --check-delay \
             --threshold 900
         env:

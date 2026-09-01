@@ -26,9 +26,10 @@
 - GITHUB_REPOSITORY: 仓库名（必需，如 owner/repo）
 - GITHUB_TOKEN: GitHub Token（可选）
 - GITHUB_WORKFLOW: Workflow 名称（可选）
-- EXPECTED_RUN_TIME: 预期运行时间，**UTC 时间**（默认 00:00，对应本项目
-  workflow 的 cron '0 0 * * *' = 北京时间 08:00）。填成北京时间 08:00 会让
-  delay_seconds 恒为负，延迟告警永不触发。
+- EXPECTED_RUN_TIME: 预期运行时间（格式 HH:MM，默认 00:00）。
+  * 默认按 **UTC 时间** 解析（本项目定时 cron 是 UTC 00:00）
+  * 若设置了 EXPECTED_TIMEZONE，则按该时区解析（如 Asia/Shanghai 则填 08:00）
+- EXPECTED_TIMEZONE: 可选，时区名（如 Asia/Shanghai）。设置后 EXPECTED_RUN_TIME 按此时区解析
 - DELAY_THRESHOLD: 延迟阈值秒数（默认 600）
 - ALERT_WECOM_WEBHOOK: 企业微信 Webhook
 - ALERT_DINGTALK_WEBHOOK: 钉钉 Webhook
@@ -42,6 +43,7 @@
 import json
 import os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 
 def main_handler(event, context):
@@ -71,6 +73,7 @@ def main_handler(event, context):
         token = os.environ.get('GITHUB_TOKEN', '')
         workflow = os.environ.get('GITHUB_WORKFLOW', '')
         expected_time_str = os.environ.get('EXPECTED_RUN_TIME', '00:00')
+        expected_tz_str = os.environ.get('EXPECTED_TIMEZONE', '')
         threshold = int(os.environ.get('DELAY_THRESHOLD', 600))
 
         if not repo:
@@ -84,7 +87,8 @@ def main_handler(event, context):
         print(f"监测仓库: {repo}")
         if workflow:
             print(f"Workflow: {workflow}")
-        print(f"预期运行时间: {expected_time_str}")
+        print(f"预期运行时间: {expected_time_str}" +
+              (f" ({expected_tz_str})" if expected_tz_str else " (UTC)"))
         print(f"延迟阈值: {threshold} 秒")
         print()
 
@@ -140,10 +144,28 @@ def main_handler(event, context):
 
             # 计算预期时间
             expected_hour, expected_minute = map(int, expected_time_str.split(':'))
-            expected_time = datetime.combine(
-                today,
-                datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
-            ).replace(tzinfo=timezone.utc)
+
+            # 根据 EXPECTED_TIMEZONE 决定时区
+            if expected_tz_str:
+                try:
+                    tz = ZoneInfo(expected_tz_str)
+                    # 在指定时区构造时间，然后转为 UTC
+                    expected_time = datetime.combine(
+                        today,
+                        datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
+                    ).replace(tzinfo=tz).astimezone(timezone.utc)
+                except Exception as e:
+                    print(f"  [!] 时区 {expected_tz_str} 无效，回退到 UTC: {e}")
+                    expected_time = datetime.combine(
+                        today,
+                        datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
+                    ).replace(tzinfo=timezone.utc)
+            else:
+                # 默认 UTC
+                expected_time = datetime.combine(
+                    today,
+                    datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
+                ).replace(tzinfo=timezone.utc)
 
             # 计算延迟
             delay_seconds = (started_time - expected_time).total_seconds()
