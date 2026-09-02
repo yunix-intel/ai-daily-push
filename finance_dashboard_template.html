@@ -8,8 +8,13 @@
   :root{--bg:#0e1014;--bg2:#151922;--card:#171c26;--card-hover:#1e2531;--border:#272f3d;--text:#e8ecf3;--muted:#9aa4b2;--accent:#f0b429;--accent2:#37e0b0;--up:#ff5b5b;--down:#3ddc84;--warn:#ff7a45;--chip:#222b39;--shadow:rgba(0,0,0,.45);--domestic:#5b9eff;--intl:#ff8c42;}
   *{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth}
-  body{background:radial-gradient(1200px 600px at 80% -10%, #2a2213 0%, var(--bg) 55%) fixed;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  body{background:radial-gradient(1200px 600px at 80% -10%, #2a2213 0%, var(--bg) 55%) fixed;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;padding-top:56px}
   a{color:inherit;text-decoration:none}
+  .global-nav{position:fixed;top:0;left:0;right:0;background:rgba(14,16,20,0.95);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);z-index:1000;padding:12px 0}
+  .global-nav .wrap{max-width:1160px;margin:0 auto;padding:0 20px;display:flex;gap:20px;align-items:center}
+  .global-nav a{color:var(--text);text-decoration:none;font-size:14px;font-weight:600;padding:6px 12px;border-radius:6px;transition:all .2s}
+  .global-nav a:hover{background:var(--card-hover);color:var(--accent)}
+  .global-nav a.active{background:var(--accent);color:#0c1320}
   .wrap{max-width:1180px;margin:0 auto;padding:0 18px}
   .hero{padding:30px 0 16px}
   .kicker{display:inline-flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.18em;color:var(--accent);border:1px solid var(--border);padding:5px 12px;border-radius:999px;background:var(--bg2)}
@@ -106,6 +111,11 @@
 </style>
 </head>
 <body>
+<nav class="global-nav"><div class="wrap">
+  <a href="ai_daily_dashboard.html">AI 日报</a>
+  <a href="finance_dashboard.html" class="active">财经日报</a>
+  <a href="push_history_report.html">推送监控</a>
+</div></nav>
 <header class="hero"><div class="wrap">
   <span class="kicker">● 财经日报 · 多来源聚合</span>
   <h1>财经日报 <span class="sub">晨报仪表盘</span></h1>
