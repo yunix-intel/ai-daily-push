@@ -1155,10 +1155,23 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
             })
         shaped_international.append({"label": section["label"], "items": items})
 
+    # 计算实际收录窗口（基于 cron 时间）
+    cron_hour = int(os.getenv('CRON_HOUR', '23'))
+    cron_minute = int(os.getenv('CRON_MINUTE', '23'))
+
+    # 计算窗口结束时间（今天的 cron 时间）
+    window_end = now_utc.replace(hour=cron_hour, minute=cron_minute, second=0, microsecond=0)
+    if now_utc.hour < cron_hour or (now_utc.hour == cron_hour and now_utc.minute < cron_minute):
+        # 还没到今天的 cron 时间，使用昨天的
+        window_end -= timedelta(days=1)
+
+    # 窗口开始时间 = 结束时间 - window_hours
+    window_start = window_end - timedelta(hours=window_hours)
+
     meta = {
         "date": (now_utc + CST_OFFSET).strftime("%Y-%m-%d"),
-        "windowStart": (now_utc - timedelta(hours=window_hours)).isoformat(),
-        "windowEnd": now_utc.isoformat(),
+        "windowStart": window_start.isoformat(),
+        "windowEnd": window_end.isoformat(),
         "generatedAt": now_utc.isoformat(),
         "total": gi,
         "domesticCount": sum(len(s["items"]) for s in shaped_domestic),

@@ -14,8 +14,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-deploy
-  cancel-in-progress: false
+  group: daily-push-${{ github.ref }}
+  cancel-in-progress: true  # 防止手动触发和定时触发冲突
 
 jobs:
   build-and-push:
@@ -29,7 +29,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      # 检查互斥锁，防止手动触发和定时触发冲突
+      - name: 检查是否有重复运行
+        id: lock_check
+        run: |
+          python workflow_lock.py
+          echo "lock_acquired=true" >> $GITHUB_OUTPUT
+
       - name: 清除 Python 缓存
+        if: steps.lock_check.outputs.lock_acquired == 'true'
         run: |
           find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
           find . -type f -name "*.pyc" -delete 2>/dev/null || true
@@ -57,6 +65,7 @@ jobs:
             translations-
 
       - name: 第一条：AI 日报（图文卡片 + AI 日报网页）
+        if: steps.lock_check.outputs.lock_acquired == 'true'
         env:
           WECOM_CORPID: ${{ secrets.WECOM_CORPID }}
           WECOM_CORPSECRET: ${{ secrets.WECOM_CORPSECRET }}
@@ -71,9 +80,12 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
+          CRON_HOUR: "23"
+          CRON_MINUTE: "23"
         run: python ai_daily_push.py
 
       - name: 第二条：财经日报（markdown + 财经网页）
+        if: steps.lock_check.outputs.lock_acquired == 'true'
         continue-on-error: true
         env:
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
@@ -83,6 +95,8 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
+          CRON_HOUR: "23"
+          CRON_MINUTE: "23"
         run: python finance_daily_push.py
 
       # --expected-time 必须与上面第 8 行的 cron 保持一致（UTC 23:23），

@@ -237,11 +237,28 @@ def aggregate_sources(primary):
     # 统一智能分类
     sections = classify_ai_items(all_items)
 
+    # 计算实际收录窗口（基于 cron 时间）
+    from datetime import datetime, timezone, timedelta
+    now_utc = datetime.now(timezone.utc)
+
+    # 读取 cron 配置（小时:分钟）
+    cron_hour = int(os.getenv('CRON_HOUR', '23'))
+    cron_minute = int(os.getenv('CRON_MINUTE', '23'))
+
+    # 计算窗口结束时间（今天的 cron 时间）
+    window_end = now_utc.replace(hour=cron_hour, minute=cron_minute, second=0, microsecond=0)
+    if now_utc.hour < cron_hour or (now_utc.hour == cron_hour and now_utc.minute < cron_minute):
+        # 还没到今天的 cron 时间，使用昨天的
+        window_end -= timedelta(days=1)
+
+    # 窗口开始时间 = 结束时间 - 24小时
+    window_start = window_end - timedelta(hours=24)
+
     return {
         "date": primary.get("date", ""),
-        "windowStart": primary.get("windowStart", ""),
-        "windowEnd": primary.get("windowEnd", ""),
-        "generatedAt": primary.get("generatedAt", ""),
+        "windowStart": window_start.isoformat(),  # 覆盖
+        "windowEnd": window_end.isoformat(),      # 覆盖
+        "generatedAt": now_utc.isoformat(),
         "attribution": primary.get("attribution", {}),
         "links": primary.get("links", {}),
         "sections": sections
