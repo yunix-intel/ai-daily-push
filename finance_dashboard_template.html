@@ -85,6 +85,14 @@
   .nav a{flex:0 0 auto;font-size:13.5px;color:var(--muted);border:1px solid var(--border);background:var(--bg2);padding:7px 13px;border-radius:999px;white-space:nowrap;transition:.15s}
   .nav a:hover{color:var(--text);border-color:var(--accent)}
   .nav a b{color:var(--accent);font-weight:700;margin-left:6px}
+  .tabs{display:flex;gap:12px;padding:20px 0 16px;border-bottom:1px solid var(--border);margin-bottom:24px}
+  .tab{background:transparent;border:none;color:var(--muted);font-size:15px;font-weight:600;padding:10px 16px;border-radius:8px;cursor:pointer;transition:.2s;position:relative}
+  .tab:hover{color:var(--text);background:var(--bg2)}
+  .tab.active{color:var(--text);background:var(--card)}
+  .tab.active::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;background:var(--accent)}
+  .tab .count{display:inline-block;margin-left:6px;padding:2px 8px;background:var(--chip);border-radius:12px;font-size:12px;font-weight:700}
+  .tab.active .count{background:var(--accent);color:#0c1320}
+  .section.hidden{display:none}
   main{padding:28px 0 10px}
   .section{margin-bottom:38px;scroll-margin-top:64px}
   .section-head{display:flex;align-items:baseline;gap:12px;margin-bottom:16px;border-left:4px solid var(--accent);padding-left:12px}
@@ -167,6 +175,14 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   if(bloggerViews.length) nav+='<a href="#blogger-section">博主观点<b>'+bloggerViews.length+'</b></a>';
   document.getElementById('navLinks').innerHTML=nav;
   let main='';
+
+  // Tab 导航（国内/国际分类切换）
+  const totalCount = meta.total || 0;
+  main+='<div class="tabs">';
+  main+='<button class="tab active" data-filter="all">全部新闻<span class="count">'+totalCount+'</span></button>';
+  main+='<button class="tab" data-filter="domestic">国内要闻<span class="count">'+meta.domesticCount+'</span></button>';
+  main+='<button class="tab" data-filter="intl">国际要闻<span class="count">'+meta.internationalCount+'</span></button>';
+  main+='</div>';
 
   // 追踪博主观点。刻意放在要闻之前、策略之后：这是个人判断不是事实，
   // 读者应该先看完客观信息再看别人怎么想；但它又比逐条快讯更浓缩，
@@ -423,6 +439,39 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   document.getElementById('main').innerHTML=main;
   const sources='格隆汇、同花顺、金十数据、第一财经、财新网、Seeking Alpha、Bloomberg、CNBC';
   document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：'+sources+' · 行情：腾讯财经';
+
+  // Tab 切换功能
+  const tabs = document.querySelectorAll('.tab');
+  const sections = document.querySelectorAll('.section');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', function(){
+      const filter = this.getAttribute('data-filter');
+
+      // 更新 tab 状态
+      tabs.forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+
+      // 过滤显示对应的 section
+      sections.forEach(section => {
+        const sectionId = section.getAttribute('id');
+        if(filter === 'all'){
+          section.classList.remove('hidden');
+        }else if(filter === 'domestic' && sectionId && sectionId.startsWith('domestic-')){
+          section.classList.remove('hidden');
+        }else if(filter === 'intl' && sectionId && sectionId.startsWith('intl-')){
+          section.classList.remove('hidden');
+        }else{
+          section.classList.add('hidden');
+        }
+      });
+
+      // 平滑滚动到第一个可见的新闻区域
+      const firstVisible = document.querySelector('.section:not(.hidden)');
+      if(firstVisible){
+        firstVisible.scrollIntoView({behavior:'smooth',block:'nearest'});
+      }
+    });
+  });
 })();
 
 // 展开/折叠翻译全文
