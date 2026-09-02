@@ -426,6 +426,35 @@ def fetch_finance_items(hours=24, per_feed=20):
 
     print(f"     过滤后：国内 {len(filtered_domestic)} 条，国际 {len(filtered_international)} 条")
 
+    # 过滤盘中信息（仅在非交易时间）
+    from trading_calendar import is_trading_hour, is_intraday_news
+
+    if not is_trading_hour():
+        print(f"     [2.3] 过滤盘中实时信息...")
+        intraday_filtered_domestic = []
+        intraday_filtered_international = []
+        domestic_intraday_count = 0
+        international_intraday_count = 0
+
+        for item in filtered_domestic:
+            if not is_intraday_news(item['title'], item['summary']):
+                intraday_filtered_domestic.append(item)
+            else:
+                domestic_intraday_count += 1
+
+        for item in filtered_international:
+            if not is_intraday_news(item['title'], item['summary']):
+                intraday_filtered_international.append(item)
+            else:
+                international_intraday_count += 1
+
+        total_filtered = domestic_intraday_count + international_intraday_count
+        if total_filtered > 0:
+            print(f"     已过滤 {total_filtered} 条盘中信息（国内 {domestic_intraday_count}，国际 {international_intraday_count}）")
+
+        filtered_domestic = intraday_filtered_domestic
+        filtered_international = intraday_filtered_international
+
     return {"domestic": filtered_domestic, "international": filtered_international}
 
 

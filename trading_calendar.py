@@ -471,4 +471,87 @@ if __name__ == '__main__':
         print(f"  上一交易日：{format_date_cn(status['last_trading_day'])}")
         print(f"  距上次交易：{status['days_since_last_trading']}天")
         print(f"  是否节后首日：{status['is_post_holiday']}")
+
+
+# ==================== 交易时间判断（盘中信息过滤） ====================
+
+# 北京时间 UTC+8
+BEIJING_TZ = datetime.timezone(datetime.timedelta(hours=8))
+
+# A股交易时段
+A_SHARE_SESSIONS = [
+    (datetime.time(9, 30), datetime.time(11, 30)),   # 上午
+    (datetime.time(13, 0), datetime.time(15, 0)),    # 下午
+]
+
+
+def is_trading_hour(dt=None, market='A'):
+    """
+    判断是否为交易时间
+
+    Args:
+        dt: 日期时间对象，默认为当前时间
+        market: 市场代码，默认'A'（A股）
+
+    Returns:
+        bool: 是否在交易时段
+    """
+    if dt is None:
+        dt = datetime.datetime.now(BEIJING_TZ)
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=BEIJING_TZ)
+    else:
+        dt = dt.astimezone(BEIJING_TZ)
+
+    # 检查是否为交易日
+    if not is_trading_day(dt.date(), market):
+        return False
+
+    # 检查是否在交易时段
+    current_time = dt.time()
+
+    if market == 'A':
+        sessions = A_SHARE_SESSIONS
+    else:
+        return False  # 暂不支持其他市场
+
+    for start, end in sessions:
+        if start <= current_time <= end:
+            return True
+
+    return False
+
+
+def is_intraday_news(title, summary, pub_time=None):
+    """
+    判断是否为盘中实时新闻
+
+    Args:
+        title: 新闻标题
+        summary: 新闻摘要
+        pub_time: 发布时间（可选）
+
+    Returns:
+        bool: 是否为盘中新闻
+    """
+    content = title + ' ' + summary
+
+    # 盘中关键词
+    intraday_keywords = [
+        '盘中', '尾盘', '开盘', '盘前', '午盘',
+        '涨停', '跌停', '炸板', '封板',
+        '直线拉升', '快速拉升', '急跌', '跳水',
+        '异动', '盘面', '盘口'
+    ]
+
+    # 如果包含盘中关键词
+    if any(kw in content for kw in intraday_keywords):
+        # 如果有发布时间，检查是否为交易时间
+        if pub_time:
+            return is_trading_hour(pub_time)
+        else:
+            # 没有发布时间，保守判断为盘中新闻
+            return True
+
+    return False
         print(f"  市场状态：{status['market_status']}")
