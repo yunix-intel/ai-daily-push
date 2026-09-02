@@ -125,39 +125,107 @@ def _classify_region_chunk(items: List[Dict], llm_call_func) -> List[str]:
 
 
 def classify_by_keywords(item: Dict) -> Literal['domestic', 'international']:
-    """关键词分类（回退方案）"""
-    text = f"{item.get('title', '')} {item.get('summary', '')}".lower()
+    """
+    关键词分类（回退方案）
 
-    domestic_keywords = [
-        'a股', '沪深', '上证', '深证', '港股', '恒生', '人民币', '央行',
-        '中国', '国内', '北京', '上海', '深圳', '香港', '内地'
+    优先级：
+    1. 内容强关键词（中国相关 → 国内）
+    2. 内容国际关键词（美国/欧洲 → 国际）
+    3. 来源判断（兜底）
+    """
+    title = item.get('title', '')
+    summary = item.get('summary', '')
+    text = f"{title} {summary}".lower()
+
+    # ===== 第1优先级：强制国内关键词 =====
+    domestic_strong = [
+        # 地名
+        '中国', 'china', 'chinese', '中华',
+        # 市场
+        'a股', 'a-share', '上证', '深证', '沪市', '深市',
+        '创业板', 'chinext', '科创板', 'star market',
+        '港股', 'h股', '香港', 'hong kong', 'hk',
+        '沪深', '恒生',
+        # 机构
+        '央行', 'pboc', '人民银行',
+        '证监会', 'csrc', '银保监', 'cbirc',
+        '发改委', 'ndrc', '商务部', 'mofcom',
+        '国务院', 'state council',
+        # 企业（常见）
+        '华为', 'huawei', '腾讯', 'tencent', '阿里', 'alibaba',
+        '中石油', 'petrochina', '中石化', 'sinopec',
+        '工商银行', 'icbc', '建设银行', 'ccb',
+        # 货币
+        '人民币', 'cny', 'rmb', 'yuan',
+        # 地域
+        '北京', 'beijing', '上海', 'shanghai',
+        '深圳', 'shenzhen', '内地', 'mainland',
     ]
 
-    international_keywords = [
-        '美股', '纳指', '标普', '道琼斯', '美联储', '美元', '欧洲', '日本',
-        'nasdaq', 'dow', 's&p', 'fed', 'wall street'
-    ]
-
-    domestic_score = sum(1 for kw in domestic_keywords if kw in text)
-    international_score = sum(1 for kw in international_keywords if kw in text)
-
-    if domestic_score > international_score:
-        return 'domestic'
-    elif international_score > domestic_score:
-        return 'international'
-    else:
-        # 默认根据来源判断
-        source = item.get('source', '')
-        # source 可能是字符串或字典
-        if isinstance(source, dict):
-            source_name = source.get('name', '').lower()
-        else:
-            source_name = str(source).lower()
-
-        if any(s in source_name for s in ['新浪', '东方财富', '证券', '财联社', '格隆汇']):
+    for keyword in domestic_strong:
+        if keyword in text:
             return 'domestic'
-        else:
+
+    # ===== 第2优先级：强制国际关键词 =====
+    international_strong = [
+        # 国家/地区（排除中国/香港）
+        '美国', 'us', 'usa', 'america', 'american',
+        '欧洲', 'europe', 'european', 'eu', '欧盟',
+        '日本', 'japan', 'japanese',
+        '英国', 'uk', 'britain', 'british',
+        '德国', 'germany', 'german',
+        '法国', 'france', 'french',
+        '俄罗斯', 'russia', 'russian',
+        '印度', 'india', 'indian',
+        '韩国', 'korea', 'korean',
+        # 机构
+        '美联储', 'fed', 'federal reserve',
+        '欧央行', 'ecb', 'european central bank',
+        '日本央行', 'boj', 'bank of japan',
+        # 市场
+        '美股', '纳指', '标普', '道琼斯',
+        'nasdaq', 'dow', 's&p', 'wall street',
+        'nyse', '纽交所',
+        # 冲突/地缘政治
+        '乌克兰', 'ukraine', '伊朗', 'iran',
+        '以色列', 'israel', '巴勒斯坦', 'palestine',
+        '美军', 'us military',
+    ]
+
+    for keyword in international_strong:
+        if keyword in text:
             return 'international'
+
+    # ===== 第3优先级：来源判断（兜底）=====
+    source = item.get('source', '')
+    if isinstance(source, dict):
+        source_name = source.get('name', '').lower()
+    else:
+        source_name = str(source).lower()
+
+    domestic_sources = [
+        '新浪', '东方财富', '证券', '财联社', '格隆汇',
+        '新华社', 'xinhua', '财新', 'caixin',
+        '中国证券', '上海证券', '经济参考', '第一财经'
+    ]
+
+    for s in domestic_sources:
+        if s in source_name:
+            return 'domestic'
+
+    international_sources = [
+        'bloomberg', 'reuters', 'cnbc', 'wsj',
+        'financial times', 'ft', 'economist',
+        'marketwatch'
+    ]
+
+    for s in international_sources:
+        if s in source_name:
+            return 'international'
+
+    # ===== 默认：国内 =====
+    # 项目主要关注中国市场，默认归国内
+    return 'domestic'
 
 
 def score_news_importance_batch(items: List[Dict], llm_call_func, market_context: str = "") -> List[int]:
@@ -240,7 +308,7 @@ def _score_importance_chunk(items: List[Dict], llm_call_func, market_context: st
 
 def identify_breaking_news(items: List[Dict], llm_call_func, time_threshold_hours: int = 24) -> List[Dict]:
     """
-    识别突发事件
+    识别突发事件（带地域验证）
 
     Args:
         items: 新闻列表
@@ -248,7 +316,7 @@ def identify_breaking_news(items: List[Dict], llm_call_func, time_threshold_hour
         time_threshold_hours: 时间阈值（小时）
 
     Returns:
-        突发事件列表，每个包含 title, desc, impact, direction, sectors
+        突发事件列表，每个包含 title, desc, impact, direction, sectors, _region_hint
     """
     # 第一步：关键词筛选候选
     urgent_keywords = [
@@ -283,6 +351,32 @@ def identify_breaking_news(items: List[Dict], llm_call_func, time_threshold_hour
                 'sectors': [],
                 'original_item': item
             } for item in chunk[:2])
+
+    # 第三步：地域验证（二次检查，防止分类错误）
+    for event in breaking_events:
+        title = event.get('title', '')
+        impact = event.get('impact', '')
+        desc = event.get('desc', '')
+        content = f"{title} {impact} {desc}".lower()
+
+        # 国际关键词
+        intl_keywords = [
+            '美国', '美军', '伊朗', '以色列', '俄罗斯', '乌克兰',
+            'us', 'usa', 'iran', 'israel', 'russia', 'ukraine',
+            '美联储', 'fed', '欧洲央行', 'ecb', '日本央行'
+        ]
+
+        # 国内关键词
+        china_keywords = [
+            '中国', '央行', 'a股', '上证', '深证', '证监会',
+            'pboc', '人民银行', '国务院', '发改委', '港股'
+        ]
+
+        if any(kw in content for kw in intl_keywords):
+            event['_region_hint'] = 'international'
+        elif any(kw in content for kw in china_keywords):
+            event['_region_hint'] = 'domestic'
+        # 如果都不匹配，不添加 _region_hint，保持原分类
 
     return breaking_events
 

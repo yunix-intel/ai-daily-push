@@ -1551,7 +1551,30 @@ def main():
 
         breaking_events_domestic = identify_breaking_news(items_domestic, llm_wrapper) if items_domestic else []
         breaking_events_international = identify_breaking_news(items_international, llm_wrapper) if items_international else []
-        print(f"     突发事件：国内 {len(breaking_events_domestic)} 个，国际 {len(breaking_events_international)} 个")
+
+        # 新增：根据 _region_hint 重新分配（防止分类错误）
+        breaking_events_domestic_final = []
+        breaking_events_international_final = []
+
+        for event in breaking_events_domestic:
+            if event.get('_region_hint') == 'international':
+                print(f"     [重新分类] {event.get('title', '')[:40]}... → 国际")
+                breaking_events_international_final.append(event)
+            else:
+                breaking_events_domestic_final.append(event)
+
+        for event in breaking_events_international:
+            if event.get('_region_hint') == 'domestic':
+                print(f"     [重新分类] {event.get('title', '')[:40]}... → 国内")
+                breaking_events_domestic_final.append(event)
+            else:
+                breaking_events_international_final.append(event)
+
+        # 使用重新分类后的结果
+        breaking_events_domestic = breaking_events_domestic_final
+        breaking_events_international = breaking_events_international_final
+
+        print(f"     突发事件（重新分类后）：国内 {len(breaking_events_domestic)} 个，国际 {len(breaking_events_international)} 个")
 
         # 分析突发事件影响
         if breaking_events_domestic or breaking_events_international:
