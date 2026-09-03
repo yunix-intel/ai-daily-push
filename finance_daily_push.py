@@ -71,6 +71,7 @@ from trading_calendar import (
     get_trading_status,
     format_date_cn,
     is_trading_day,
+    is_trading_hour,
     get_last_trading_day,
 )
 from news_classifier import (
@@ -141,8 +142,135 @@ def clean_html_tags(text):
     return text
 
 
+# 未开盘时取上一交易日收盘的数据源。新浪为主源（实测稳定），东财为兜底
+# （东财对高频请求会直接断连，只在新浪失败时才用）。
+SINA_HEADERS = {"User-Agent": UA, "Referer": "https://finance.sina.com.cn/"}
+SINA_KLINE_API = (
+    "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+    "CN_MarketData.getKLineData?symbol={symbol}&scale=240&ma=no&datalen=2"
+)
+SINA_HK_SNAPSHOT_API = "https://hq.sinajs.cn/list=rt_{symbol}"
+
+# 东财兜底用：code -> secid（沪市 1.、深市 0.、港股指数 100./124.）
+KLINE_SECID = {
+    "sh000001": "1.000001",
+    "sz399001": "0.399001",
+    "sz399006": "0.399006",
+    "hkHSI": "100.HSI",
+    "hkHSTECH": "124.HSTECH",
+}
+KLINE_API = (
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    "?secid={secid}&fields1=f1,f2,f3&fields2=f51,f52,f53,f57,f58,f59"
+    "&klt=101&fqt=1&end=20500101&lmt=2"
+)
+
+
+def _sina_ashare_close(code):
+    """新浪日 K 取 A 股指数最近收盘。返回 (price, change, pct, as_of) 或 None。"""
+    req = urllib.request.Request(
+        SINA_KLINE_API.format(symbol=code), headers=SINA_HEADERS
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        rows = json.loads(response.read().decode("utf-8", errors="replace"))
+    if not rows:
+        return None
+    close = float(rows[-1]["close"])
+    day = rows[-1].get("day", "")
+    if len(rows) >= 2:
+        prev = float(rows[-2]["close"])
+        return close, round(close - prev, 2), round((close - prev) / prev * 100, 2), day
+    return close, 0.0, 0.0, day
+
+
+def _sina_hk_close(code):
+    """新浪港股快照取最近收盘。收盘后 [6] 即为收盘价。返回 (price, change, pct, as_of) 或 None。"""
+    req = urllib.request.Request(
+        SINA_HK_SNAPSHOT_API.format(symbol=code), headers=SINA_HEADERS
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        raw = response.read().decode("gbk", errors="replace")
+    if '"' not in raw:
+        return None
+    # [3]=前收 [6]=现价/收盘 [7]=涨跌额 [8]=涨跌幅 [17]=日期
+    fields = raw.split('"')[1].split(",")
+    if len(fields) < 9:
+        return None
+    as_of = fields[17] if len(fields) > 17 else ""
+    return float(fields[6]), float(fields[7]), float(fields[8]), as_of
+
+
+def _eastmoney_close(code):
+    """东财日 K 兜底。返回 (price, change, pct, as_of) 或 None。"""
+    secid = KLINE_SECID.get(code)
+    if not secid:
+        return None
+    req = urllib.request.Request(
+        KLINE_API.format(secid=secid), headers={"User-Agent": UA}
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    klines = ((payload.get("data") or {}).get("klines")) or []
+    if not klines:
+        return None
+    # f51=日期 f52=开盘 f53=收盘 f57=成交额 f58=振幅 f59=涨跌幅
+    last = klines[-1].split(",")
+    close, pct = float(last[2]), float(last[5])
+    if len(klines) >= 2:
+        change = round(close - float(klines[-2].split(",")[2]), 2)
+    else:
+        change = round(close * pct / 100.0, 2)
+    return close, change, pct, last[0]
+
+
+def _fetch_last_close_quotes():
+    """未开盘时取上一交易日收盘涨跌幅。
+
+    07:00 推送时 A 股尚未开盘，实时接口返回的现价就等于前收盘价，算出来必然是
+    0.00%（问题6 的根因）。这里改取最近收盘日数据：A 股走新浪日 K，港股走新浪
+    快照（收盘后即为收盘价），任一失败再退到东财日 K。
+
+    返回 [{name, price, change, pct, as_of}]；整体失败返回 []，由调用方回落到实时源。
+    """
+    quotes = []
+    for code, name in QUOTE_CODES:
+        primary = _sina_hk_close if code.startswith("hk") else _sina_ashare_close
+        result = None
+        for fetch in (primary, _eastmoney_close):
+            try:
+                result = fetch(code)
+            except Exception:
+                result = None
+            if result:
+                break
+        if not result:
+            continue
+        price, change, pct, as_of = result
+        quotes.append({
+            "name": name,
+            "price": price,
+            "change": change,
+            "pct": pct,
+            # 新浪港股快照给的是 2026/09/03，A 股日 K 给的是 2026-09-03，统一成后者
+            "as_of": (as_of or "").replace("/", "-"),
+        })
+    return quotes
+
+
 def fetch_quotes():
-    """返回 [{name, price, change, pct}]。单个字段解析失败就跳过该指数，不影响其余。"""
+    """返回 [{name, price, change, pct}]。单个字段解析失败就跳过该指数，不影响其余。
+
+    非交易时段（如 07:00 推送）改取上一交易日收盘数据，并带上 as_of 供前端标注，
+    否则实时源会给出 0.00% 的无信息量结果。
+    """
+    try:
+        if not is_trading_hour():
+            closed_quotes = _fetch_last_close_quotes()
+            if closed_quotes:
+                return closed_quotes
+    except Exception:
+        pass  # 判断或取数失败都回落到实时源，不让行情区整块消失
+
     url = QUOTE_API + ",".join(code for code, _ in QUOTE_CODES)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=20) as response:
@@ -1488,9 +1616,24 @@ def main():
         from scrapers.money_flow_scraper import MoneyFlowScraper
         scraper = MoneyFlowScraper()
 
-        north_flow = scraper.fetch_north_flow()
-        sector_flow = scraper.fetch_sector_flow(top_n=5)
-        stock_flow = scraper.fetch_stock_flow(top_n=10)
+        # 三路各自独立兜底：北向已被交易所停止披露，若与板块/个股共用一个
+        # try，任何一路报错都会把另两路已抓到的数据一起丢掉（问题10 的表现之一）。
+        def _safe_fetch(label, fetch, fallback):
+            try:
+                return fetch()
+            except Exception as exc:
+                print(f"     [WARN] {label}获取失败，跳过该板块：{exc!r}")
+                return fallback
+
+        north_flow = _safe_fetch(
+            "北向资金", scraper.fetch_north_flow,
+            {"available": False, "error": "数据抓取失败"})
+        sector_flow = _safe_fetch(
+            "行业资金流向", lambda: scraper.fetch_sector_flow(top_n=5),
+            {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
+        stock_flow = _safe_fetch(
+            "个股资金流向", lambda: scraper.fetch_stock_flow(top_n=10),
+            {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
 
         money_flow_data = {
             "north_flow": north_flow,
@@ -1527,7 +1670,6 @@ def main():
             "sector_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"},
             "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"}
         }
-        print(f"     [!] 资金流向抓取失败，继续执行：{exc!r}")
 
     print("[1.6/6] 抓取追踪博主观点 ...")
     blogger_views = []
@@ -1607,6 +1749,13 @@ def main():
             print(f"     [!] 重要性评分失败，使用默认分数：{e}")
             scores = []
 
+        # 先给所有条目写入兜底的 region / importance_score，再让 LLM 结果覆盖。
+        # 这两个键原先只在分类成功的分支里赋值，LLM 一失败就双双缺失，
+        # 下游 is_worth_translating() 因此对每条都返回 False（实测全文翻译 0/54）。
+        for item in all_items:
+            item.setdefault('region', classify_news_category(item))
+            item.setdefault('importance_score', 5)
+
         # 更新分类和评分
         if regions and len(regions) == len(all_items):
             for i, item in enumerate(all_items):
@@ -1623,12 +1772,9 @@ def main():
             items_domestic.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
             items_international.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
         else:
-            # 分类失败，使用原始分组
+            # 分类失败，使用原始分组（region / importance_score 已在上面兜底写入）
             items_domestic = items_grouped["domestic"]
             items_international = items_grouped["international"]
-            # 默认评分
-            for item in items_domestic + items_international:
-                item['importance_score'] = 5
             print(f"     使用原始分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
 
     except Exception as exc:

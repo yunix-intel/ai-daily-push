@@ -55,13 +55,18 @@ class ArticleTranslator:
         Returns:
             bool: 是否值得翻译
         """
-        # 必须是国际要闻
-        if item.get("region") != "international":
+        # 必须是国际要闻。region 由 LLM 批量分类写入，分类失败时这个键会缺失；
+        # 此时不能直接否决——下面还有一层「原文是否英文」的兜底判断，
+        # 英文正文本身就是国际要闻的充分证据。只在显式标成非 international 时才拒。
+        region = item.get("region")
+        if region is not None and region != "international":
             return False
 
-        # 重要性评分 >= 7
-        importance = item.get("importance_score", 0)
-        if importance < 7:
+        # 重要性评分门槛。缺失时按中性值放行：评分和 region 由同一个批量步骤写入，
+        # 该步骤失败时两个键一起缺，硬卡分数会把当天所有条目全部拦掉（实测 0/54 通过）。
+        # 阈值取 5，与批量步骤失败时写入的默认分对齐，否则默认分永远进不来。
+        importance = item.get("importance_score")
+        if importance is not None and importance < 5:
             return False
 
         # 必须有原文链接

@@ -164,20 +164,23 @@ class MoneyFlowScraper:
             sz_flow = self._num((flow_data.get('hk2sz') or {}).get('dayNetAmtIn')) / 100000000
             total_flow = sh_flow + sz_flow
 
+            # 两个通道都是 0 基本可以断定是停止披露后的占位值，不是「刚好零流入」
+            available = bool(sh_flow or sz_flow)
             return {
                 "date": datetime.now().strftime("%Y-%m-%d"),
                 "sh_flow": round(sh_flow, 2),
                 "sz_flow": round(sz_flow, 2),
                 "total_flow": round(total_flow, 2),
-                # 两个通道都是 0 基本可以断定是停止披露后的占位值，不是「刚好零流入」
-                "available": bool(sh_flow or sz_flow),
+                "available": available,
+                # 带上原因，展示层才能说明「为什么没有」，而不是整块静默消失
+                "reason": "" if available else "沪深交易所已停止披露北向资金盘中净流入",
             }
 
         except Exception as e:
             print(f"     [WARN] 北向资金数据解析失败: {e}")
             return self._empty_north_flow()
 
-    def _empty_north_flow(self):
+    def _empty_north_flow(self, reason="北向资金数据暂不可用"):
         """返回空的北向资金数据"""
         return {
             "date": datetime.now().strftime("%Y-%m-%d"),
@@ -185,6 +188,7 @@ class MoneyFlowScraper:
             "sz_flow": 0,
             "total_flow": 0,
             "available": False,
+            "reason": reason,
         }
 
     def _empty_sector_flow(self):

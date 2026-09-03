@@ -29,6 +29,7 @@
   .quote .qc{font-size:12.5px;font-weight:700}
   .quote.up .qp,.quote.up .qc{color:var(--up)}
   .quote.down .qp,.quote.down .qc{color:var(--down)}
+  .quotes-note{font-size:11.5px;color:var(--muted);margin-top:7px}
   .stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
   .stat{display:inline-flex;align-items:baseline;gap:5px;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:5px 12px}
   .stat .num{font-size:14px;font-weight:800;color:var(--accent)}
@@ -135,6 +136,7 @@
   <div class="date" id="heroDate">—</div>
   <div class="window" id="heroWindow">—</div>
   <div class="quotes" id="heroQuotes"></div>
+  <div class="quotes-note" id="heroQuotesNote" hidden></div>
   <div class="stats" id="heroStats"></div>
   <div class="block strategy" id="strategyBlock" style="display:none">
     <h2>🎯 今日策略建议</h2>
@@ -163,6 +165,13 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     const sign=q.pct>0?'+':'';
     return '<span class="quote '+cls+'"><span class="qn">'+esc(q.name)+'</span><span class="qp">'+q.price+'</span><span class="qc">'+sign+q.pct.toFixed(2)+'%</span></span>';
   }).join('');
+  // 未开盘时行情取的是上一交易日收盘，标注清楚，避免读者误以为是实时价
+  const asOf=(quotes.find(q=>q.as_of)||{}).as_of;
+  if(asOf){
+    const note=document.getElementById('heroQuotesNote');
+    note.textContent='指数为截至 '+asOf+' 收盘数据（推送时尚未开盘）';
+    note.hidden=false;
+  }
   let st='<div class="stat total"><div class="num">'+meta.total+'</div><div class="lbl">总条数</div></div>';
   st+='<div class="stat domestic"><div class="num">'+meta.domesticCount+'</div><div class="lbl">国内要闻</div></div>';
   st+='<div class="stat intl"><div class="num">'+meta.internationalCount+'</div><div class="lbl">国际要闻</div></div>';
@@ -443,6 +452,11 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
       main+='<div class="'+totalCls+'" style="font-size:20px;font-weight:600">'+(nf.total_flow>0?'+':'')+nf.total_flow.toFixed(2)+' 亿</div>';
       main+='</div>';
       main+='</div></div>';
+    }
+    // 北向不可用时渲染说明行，避免读者误以为抓取失败
+    else if(moneyFlow.north_flow && !moneyFlow.north_flow.available && moneyFlow.north_flow.reason) {
+      main+='<div class="block"><div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">';
+      main+='🔺 北向资金：'+esc(moneyFlow.north_flow.reason)+'</div></div>';
     }
 
     // 行业资金流向
