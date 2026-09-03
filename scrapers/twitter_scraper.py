@@ -16,16 +16,29 @@ from datetime import datetime, timezone
 class TwitterScraper:
     """Twitter 财经传言抓取器"""
 
-    # 重要财经传言账号列表（爆料型/内幕型）
-    DEFAULT_ACCOUNTS = [
+    # 小道消息/爆料型账号（先于公开公布）
+    RUMOR_ACCOUNTS = [
         "unusual_whales",      # 🐋 期权异动监测（大单追踪）
-        "HindenburgRes",       # 🔍 兴登堡研究（做空机构，重磅爆料）
+        "HindenburgRes",       # 🔍 兴登堡研究（做空机构爆料）
         "muddywatersre",       # 💧 浑水研究（做空机构）
         "CitronResearch",      # 🍋 香橼研究（做空机构）
         "zerohedge",           # ⚡ Zero Hedge（快速市场消息）
         "DeItaone",            # 📊 实时新闻爆料
         "Fxhedgers",           # 💱 外汇市场传言
     ]
+
+    # 正规媒体账号（权威报道）
+    MEDIA_ACCOUNTS = [
+        "WSJ",                 # 📰 华尔街日报
+        "Bloomberg",           # 📈 彭博社
+        "FinancialTimes",      # 💼 金融时报
+        "Reuters",             # 🌐 路透社
+        "business",            # 📊 Bloomberg Business
+        "markets",             # 💹 Bloomberg Markets
+    ]
+
+    # 默认使用小道消息账号
+    DEFAULT_ACCOUNTS = RUMOR_ACCOUNTS
 
     def __init__(self, rsshub_base="https://rsshub.app", timeout=30):
         """
@@ -234,4 +247,53 @@ def fetch_twitter_rumors(llm_caller, accounts: Optional[List[str]] = None,
     print(f"     提取到 {len(rumors)} 条有价值传言")
 
     return rumors
+
+
+def fetch_twitter_categorized(llm_caller, max_per_category: int = 5) -> Dict[str, List[Dict]]:
+    """
+    分类抓取 Twitter 内容：小道消息 + 正规媒体
+
+    Args:
+        llm_caller: LLM 调用函数
+        max_per_category: 每个类别最多返回多少条
+
+    Returns:
+        dict: {"rumors": [...], "media": [...]}
+    """
+    scraper = TwitterScraper()
+    result = {"rumors": [], "media": []}
+
+    # 1. 抓取小道消息
+    print("\n[Twitter 小道消息]")
+    print(f"     抓取 {len(scraper.RUMOR_ACCOUNTS)} 个爆料型账号...")
+    rumor_tweets = scraper.fetch_multiple_accounts(
+        accounts=scraper.RUMOR_ACCOUNTS,
+        limit_per_account=5
+    )
+    print(f"     获取到 {len(rumor_tweets)} 条推文")
+
+    if rumor_tweets:
+        print(f"     使用 LLM 过滤噪音...")
+        result["rumors"] = scraper.filter_and_summarize(
+            rumor_tweets, llm_caller, max_rumors=max_per_category
+        )
+        print(f"     提取到 {len(result['rumors'])} 条小道消息")
+
+    # 2. 抓取正规媒体
+    print("\n[Twitter 正规媒体]")
+    print(f"     抓取 {len(scraper.MEDIA_ACCOUNTS)} 个媒体账号...")
+    media_tweets = scraper.fetch_multiple_accounts(
+        accounts=scraper.MEDIA_ACCOUNTS,
+        limit_per_account=5
+    )
+    print(f"     获取到 {len(media_tweets)} 条推文")
+
+    if media_tweets:
+        print(f"     使用 LLM 过滤噪音...")
+        result["media"] = scraper.filter_and_summarize(
+            media_tweets, llm_caller, max_rumors=max_per_category
+        )
+        print(f"     提取到 {len(result['media'])} 条正规媒体报道")
+
+    return result
 

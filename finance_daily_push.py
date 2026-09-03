@@ -1543,6 +1543,33 @@ def main():
     except Exception as exc:
         print(f"     [!] 博主观点抓取失败，继续执行：{exc!r}")
 
+    # Twitter 财经传言与媒体报道
+    print("[1.5/5] 抓取 Twitter 财经传言与媒体报道...")
+    twitter_content = {"rumors": [], "media": []}
+    try:
+        from scrapers.twitter_scraper import fetch_twitter_categorized
+
+        # 创建 LLM 调用包装器
+        def llm_caller(system_prompt, user_prompt, model=None):
+            """LLM 调用包装器，返回纯文本"""
+            try:
+                result = call_llm_json(system_prompt, user_prompt, model=model)
+                # 如果返回的是dict，转为JSON字符串
+                if isinstance(result, dict):
+                    return json.dumps(result, ensure_ascii=False)
+                return str(result)
+            except Exception as e:
+                print(f"     [WARN] LLM调用失败：{e}")
+                return ""
+
+        twitter_content = fetch_twitter_categorized(llm_caller, max_per_category=5)
+        print(f"     ✓ 小道消息 {len(twitter_content.get('rumors', []))} 条")
+        print(f"     ✓ 正规媒体 {len(twitter_content.get('media', []))} 条")
+
+    except Exception as exc:
+        print(f"     [!] Twitter 抓取失败，继续执行：{exc!r}")
+        twitter_content = {"rumors": [], "media": []}
+
     print(f"[2/5] 抓取财经快讯（过去 {args.hours} 小时）...")
     items_grouped = fetch_finance_items(hours=args.hours)
 
