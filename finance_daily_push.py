@@ -1185,7 +1185,6 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         shaped_international.append({"label": section["label"], "items": items})
 
     # 计算实际收录窗口（基于 cron 时间）
-    import subprocess
     cron_hour = int(os.getenv('CRON_HOUR', '23'))
     cron_minute = int(os.getenv('CRON_MINUTE', '23'))
 
@@ -1195,25 +1194,24 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         # 还没到今天的 cron 时间，使用昨天的
         window_end -= timedelta(days=1)
 
-    # 尝试从git历史读取上次推送时间（解决周末/长假问题）
+    # 尝试从push_history.json读取上次推送时间（解决周末/长假问题）
     window_start = window_end - timedelta(hours=window_hours)  # 默认
     try:
-        # 查找push_history.json最近一次提交的时间
-        result = subprocess.run(
-            ['git', 'log', '-1', '--format=%cI', '--', 'push_history.json'],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            last_push_str = result.stdout.strip()
-            from dateutil.parser import parse
-            last_push_time = parse(last_push_str)
-            # 使用上次推送时间作为窗口开始（更准确）
-            window_start = last_push_time
+        history_file = os.path.join(HERE, 'push_history.json')
+        if os.path.exists(history_file):
+            with open(history_file, 'r', encoding='utf-8') as f:
+                history_data = json.load(f)
+                last_push_str = history_data.get('lastPushTime')
+                if last_push_str:
+                    from dateutil.parser import parse
+                    last_push_time = parse(last_push_str)
+                    # 使用上次推送时间作为窗口开始（更准确）
+                    window_start = last_push_time
 
-            # 计算跨越天数
-            days_span = (window_end - window_start).total_seconds() / 86400
-            if days_span > 1.5:  # 超过1.5天视为跨天
-                print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
+                    # 计算跨越天数
+                    days_span = (window_end - window_start).total_seconds() / 86400
+                    if days_span > 1.5:  # 超过1.5天视为跨天
+                        print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
     except Exception as e:
         print(f"     [WARN] 无法读取上次推送时间，使用默认{window_hours}小时窗口：{e}")
 
