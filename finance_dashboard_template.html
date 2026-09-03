@@ -178,6 +178,9 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   let nav='<a href="#domestic-section">国内要闻<b>'+meta.domesticCount+'</b></a><a href="#intl-section">国际要闻<b>'+meta.internationalCount+'</b></a>';
   const bloggerViews=DATA.bloggerViews||[];
   if(bloggerViews.length) nav+='<a href="#blogger-section">博主观点<b>'+bloggerViews.length+'</b></a>';
+  const twitter = DATA.twitter || {};
+  const twitterCount = (twitter.rumors||[]).length + (twitter.media||[]).length;
+  if(twitterCount > 0) nav+='<a href="#twitter-section">Twitter观察<b>'+twitterCount+'</b></a>';
   document.getElementById('navLinks').innerHTML=nav;
   let main='';
 
@@ -360,6 +363,51 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   }
   main+=renderMarket(domestic,'domestic','🇨🇳 国内要闻');
   main+=renderMarket(international,'intl','🌍 国际要闻');
+
+  // Twitter 财经传言与媒体报道
+  const twitter = DATA.twitter || {};
+  const rumors = twitter.rumors || [];
+  const media = twitter.media || [];
+
+  if(rumors.length || media.length) {
+    main+='<div class="market-divider" id="twitter-section"><h2>🐦 Twitter 财经观察<span class="badge">'+(rumors.length + media.length)+' 条</span></h2></div>';
+
+    // 小道消息板块
+    if(rumors.length) {
+      main+='<div class="block" style="border-left:3px solid var(--warn)"><h2>⚡ 市场传言</h2>';
+      main+='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">来自期权异动监测、做空机构爆料等渠道，未经官方确认</div>';
+      rumors.forEach((r,idx)=>{
+        main+='<div style="padding:12px 0;border-bottom:1px dashed var(--border)">';
+        if(idx===rumors.length-1) main=main.slice(0,-55); // 移除最后一个的border
+        main+='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+esc(r.title||'')+'</div>';
+        main+='<div style="font-size:13.5px;color:#c9d1dc;margin-bottom:8px;text-align:justify">'+esc(r.summary||'')+'</div>';
+        if(r.impact) main+='<div style="font-size:12.5px;color:var(--accent);margin-bottom:6px">📊 '+esc(r.impact)+'</div>';
+        main+='<div style="display:flex;justify-content:space-between;align-items:center">';
+        main+='<span style="font-size:12px;color:var(--muted)">'+esc(r.source||'')+'</span>';
+        if(r.link) main+='<a href="'+safeUrl(r.link)+'" target="_blank" style="font-size:12px;color:var(--accent);text-decoration:none">查看原文 →</a>';
+        main+='</div></div>';
+      });
+      main+='</div>';
+    }
+
+    // 正规媒体板块
+    if(media.length) {
+      main+='<div class="block" style="border-left:3px solid var(--accent2)"><h2>📰 媒体速递</h2>';
+      main+='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">华尔街日报、彭博社、金融时报等权威媒体报道</div>';
+      media.forEach((m,idx)=>{
+        main+='<div style="padding:12px 0;border-bottom:1px dashed var(--border)">';
+        if(idx===media.length-1) main=main.slice(0,-55); // 移除最后一个的border
+        main+='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+esc(m.title||'')+'</div>';
+        main+='<div style="font-size:13.5px;color:#c9d1dc;margin-bottom:8px;text-align:justify">'+esc(m.summary||'')+'</div>';
+        if(m.impact) main+='<div style="font-size:12.5px;color:var(--accent2);margin-bottom:6px">📈 '+esc(m.impact)+'</div>';
+        main+='<div style="display:flex;justify-content:space-between;align-items:center">';
+        main+='<span style="font-size:12px;color:var(--muted)">'+esc(m.source||'')+'</span>';
+        if(m.link) main+='<a href="'+safeUrl(m.link)+'" target="_blank" style="font-size:12px;color:var(--accent2);text-decoration:none">查看原文 →</a>';
+        main+='</div></div>';
+      });
+      main+='</div>';
+    }
+  }
 
   // 资金流向板块
   const moneyFlow = DATA.moneyFlow || {};

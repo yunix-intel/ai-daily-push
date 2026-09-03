@@ -1129,7 +1129,7 @@ def translate_page_url(original_url):
 def shape_finance(sections_domestic, sections_international, quotes, analysis_domestic,
                   analysis_international, strategy, money_flow_data=None, window_hours=24,
                   must_read_domestic=None, must_read_international=None,
-                  blogger_views=None):
+                  blogger_views=None, twitter_content=None):
     """整合国内和国际市场数据，返回完整数据结构。
 
     must_read_*：按 importance_score 选出的「核心必读」条目（原始 item 结构），
@@ -1278,6 +1278,11 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         # 追踪博主的观点摘要。与 analysis 分开：analysis 是对新闻事实的归纳，
         # 这里是个人判断，页面上必须让读者一眼看出是「谁的看法」。
         "bloggerViews": blogger_views or [],
+        # Twitter 财经传言与媒体报道（分类）
+        "twitter": {
+            "rumors": (twitter_content or {}).get("rumors", []),
+            "media": (twitter_content or {}).get("media", []),
+        },
     }
 
 
@@ -1791,7 +1796,8 @@ def main():
                         money_flow_data=money_flow_data, window_hours=args.hours,
                         must_read_domestic=must_read_domestic,
                         must_read_international=must_read_international,
-                        blogger_views=blogger_views)
+                        blogger_views=blogger_views,
+                        twitter_content=twitter_content)
 
     out_html = os.path.join(HERE, "finance_dashboard.html")
     with open(out_html, "w", encoding="utf-8") as f:

@@ -239,11 +239,34 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
       main+='<h3><a href="'+esc(tl)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
       main+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
       if(it.originalTitle!==it.title||it.originalSummary!==it.summary) main+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+'</p>';
-      main+='<div class="foot"><span class="src">'+esc(it.source)+'</span><span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span></div></article>';});
+
+      // 全文翻译按钮（如果有translated_content）
+      if(it.translated_content && it.translated_content.trim()){
+        const contentId='translated-'+it.idx;
+        main+='<div style="margin-top:12px"><button class="translate-toggle" data-target="'+contentId+'" style="background:var(--accent);color:#0c1320;border:none;padding:6px 12px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:.2s">翻译全文 ▼</button>';
+        main+='<div id="'+contentId+'" class="translated-full" style="display:none;margin-top:10px;padding:12px;background:var(--bg2);border-left:3px solid var(--accent);border-radius:6px;font-size:13.5px;line-height:1.8;color:#c9d1dc;white-space:pre-wrap">'+esc(it.translated_content)+'</div></div>';
+      }
+
+      main+='<div class="foot"><span class="src">'+esc(it.source)+'</span><span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译网页 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span></div></article>';});
     main+='</div></section>';});
   document.getElementById('main').innerHTML=main;
   const sn=(meta.source&&meta.source.name)||'AI HOT', su=(meta.source&&meta.source.url)||meta.dailyUrl||'https://aihot.virxact.com';
   document.getElementById('footerMeta').innerHTML='本期共 <b style="color:var(--accent2)">'+meta.total+'</b> 条 · 数据来源：AI HOT、VentureBeat AI、Hugging Face Blog、arXiv cs.AI、TechCrunch AI · 日报主页：<a href="'+esc(safeUrl(meta.dailyUrl))+'" target="_blank" rel="noopener noreferrer">'+esc(meta.dailyUrl)+'</a>';
+
+  // 翻译全文按钮点击事件
+  document.querySelectorAll('.translate-toggle').forEach(btn => {
+    btn.addEventListener('click', function(){
+      const targetId = this.getAttribute('data-target');
+      const content = document.getElementById(targetId);
+      if(content.style.display === 'none'){
+        content.style.display = 'block';
+        this.textContent = '收起翻译 ▲';
+      }else{
+        content.style.display = 'none';
+        this.textContent = '翻译全文 ▼';
+      }
+    });
+  });
 })();
 </script>
 </body></html>
