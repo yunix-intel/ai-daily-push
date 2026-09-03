@@ -239,6 +239,7 @@ def aggregate_sources(primary):
 
     # 计算实际收录窗口（基于 cron 时间）
     from datetime import datetime, timezone, timedelta
+    import subprocess
     now_utc = datetime.now(timezone.utc)
 
     # 读取 cron 配置（小时:分钟）
@@ -251,8 +252,27 @@ def aggregate_sources(primary):
         # 还没到今天的 cron 时间，使用昨天的
         window_end -= timedelta(days=1)
 
-    # 窗口开始时间 = 结束时间 - 24小时
-    window_start = window_end - timedelta(hours=24)
+    # 尝试从git历史读取上次推送时间（解决周末/长假问题）
+    window_start = window_end - timedelta(hours=24)  # 默认24小时
+    try:
+        # 查找push_history.json最近一次提交的时间
+        result = subprocess.run(
+            ['git', 'log', '-1', '--format=%cI', '--', 'push_history.json'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            last_push_str = result.stdout.strip()
+            from dateutil.parser import parse
+            last_push_time = parse(last_push_str)
+            # 使用上次推送时间作为窗口开始（更准确）
+            window_start = last_push_time
+
+            # 计算跨越天数
+            days_span = (window_end - window_start).total_seconds() / 86400
+            if days_span > 1.5:  # 超过1.5天视为跨天
+                print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
+    except Exception as e:
+        print(f"     [WARN] 无法读取上次推送时间，使用默认24小时窗口：{e}")
 
     return {
         "date": primary.get("date", ""),
@@ -1558,10 +1578,14 @@ def main():
             formatter = MarketReportFormatter()
 
             # 聚合数据（暂不传入新闻项）
+            print("     [DEBUG] 开始调用 MarketDataAggregator.aggregate() ...")
             aggregated = aggregator.aggregate(news_items=None)
+            print(f"     [DEBUG] 聚合完成，返回数据: {len(aggregated) if aggregated else 0} 条")
 
             # 格式化为卡片
+            print("     [DEBUG] 开始格式化为HTML卡片 ...")
             market_cards = formatter.format_for_html(aggregated)
+            print(f"     [DEBUG] 格式化完成，生成卡片: {len(market_cards) if market_cards else 0} 个")
 
             # 转换为统一格式
             for i, card in enumerate(market_cards):
@@ -1574,7 +1598,19 @@ def main():
                     "pubDate": datetime.now(timezone.utc).isoformat()
                 })
 
-            print(f"     ✓ 市场数据：{len(market_insights)} 个指标卡片")
+            if market_insights:
+                print(f"     ✓ 市场数据：{len(market_insights)} 个指标卡片")
+            else:
+                print(f"     [WARN] 市场数据采集完成但无数据返回")
+                # 添加降级显示
+                market_insights.append({
+                    "idx": 1,
+                    "title": "市场数据暂不可用",
+                    "summary": "OpenRouter 或 Artificial Analysis API 暂时无法访问，请稍后刷新。",
+                    "link": "#",
+                    "source": "System",
+                    "pubDate": datetime.now(timezone.utc).isoformat()
+                })
 
             # 趋势分析：拿今天的聚合结果和 data/market_data 里的历史快照对比。
             # analyzers 里一直有 TrendAnalyzer，但从没接进主流程，

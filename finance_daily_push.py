@@ -1185,6 +1185,7 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         shaped_international.append({"label": section["label"], "items": items})
 
     # 计算实际收录窗口（基于 cron 时间）
+    import subprocess
     cron_hour = int(os.getenv('CRON_HOUR', '23'))
     cron_minute = int(os.getenv('CRON_MINUTE', '23'))
 
@@ -1194,8 +1195,27 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         # 还没到今天的 cron 时间，使用昨天的
         window_end -= timedelta(days=1)
 
-    # 窗口开始时间 = 结束时间 - window_hours
-    window_start = window_end - timedelta(hours=window_hours)
+    # 尝试从git历史读取上次推送时间（解决周末/长假问题）
+    window_start = window_end - timedelta(hours=window_hours)  # 默认
+    try:
+        # 查找push_history.json最近一次提交的时间
+        result = subprocess.run(
+            ['git', 'log', '-1', '--format=%cI', '--', 'push_history.json'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            last_push_str = result.stdout.strip()
+            from dateutil.parser import parse
+            last_push_time = parse(last_push_str)
+            # 使用上次推送时间作为窗口开始（更准确）
+            window_start = last_push_time
+
+            # 计算跨越天数
+            days_span = (window_end - window_start).total_seconds() / 86400
+            if days_span > 1.5:  # 超过1.5天视为跨天
+                print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
+    except Exception as e:
+        print(f"     [WARN] 无法读取上次推送时间，使用默认{window_hours}小时窗口：{e}")
 
     meta = {
         "date": (now_utc + CST_OFFSET).strftime("%Y-%m-%d"),
@@ -1485,7 +1505,25 @@ def main():
         if stock_flow and stock_flow.get('top_inflow'):
             print(f"     个股流入 Top 1：{stock_flow['top_inflow'][0].get('name', 'N/A')}"
                   f"（{stock_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）")
-    except Exception as exc:
+
+    except ImportError as e:
+        print(f"     [ERROR] 资金流向模块导入失败：{e}")
+        print(f"            请检查 requirements.txt 是否包含 beautifulsoup4")
+        print(f"            运行: pip install beautifulsoup4")
+        # 添加降级显示
+        money_flow_data = {
+            "north_flow": {"available": False, "error": "模块导入失败"},
+            "sector_flow": {"top_inflow": [], "top_outflow": [], "error": "模块导入失败"},
+            "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "模块导入失败"}
+        }
+    except Exception as e:
+        print(f"     [WARN] 资金流向抓取失败，继续执行：{e!r}")
+        # 添加降级显示
+        money_flow_data = {
+            "north_flow": {"available": False, "error": "数据抓取失败"},
+            "sector_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"},
+            "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"}
+        }
         print(f"     [!] 资金流向抓取失败，继续执行：{exc!r}")
 
     print("[1.6/6] 抓取追踪博主观点 ...")
