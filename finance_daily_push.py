@@ -1532,6 +1532,7 @@ def main():
     # 里那串数字。
     bloggers_cfg = cfg.get("bloggers") or [
         {"name": "徐小明", "uid": "1300871220"},
+        {"name": "唐史主任司马迁", "uid": "2014433131", "type": "weibo"},
     ]
     try:
         blogger_views = collect_blogger_views(bloggers_cfg, hours=args.hours)
