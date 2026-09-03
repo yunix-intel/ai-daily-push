@@ -277,7 +277,7 @@ class BloggerScraper(BaseScraper):
         批量抓取多个博主。单个博主失败不影响其他人。
 
         Args:
-            bloggers: [{"name": "徐小明", "uid": "1300871220"}, ...]
+            bloggers: [{"name": "徐小明", "uid": "1300871220", "type": "blog"/"weibo"}, ...]
 
         Returns:
             list[dict]: 只包含 available 且有文章的博主
@@ -287,10 +287,24 @@ class BloggerScraper(BaseScraper):
             uid = blogger.get("uid")
             if not uid:
                 continue
-            data = self.fetch_recent(uid, name=blogger.get("name", ""),
-                                     hours=hours, max_articles=max_articles)
-            if data["articles"]:
-                collected.append(data)
+
+            blogger_type = blogger.get("type", "blog")
+
+            if blogger_type == "weibo":
+                # 微博抓取（通过 RSSHub）
+                try:
+                    from .weibo_scraper import fetch_weibo_blogger
+                    data = fetch_weibo_blogger(uid, name=blogger.get("name", ""), hours=hours)
+                    if data["articles"]:
+                        collected.append(data)
+                except Exception as exc:
+                    print(f"     [!] 微博抓取失败 {blogger.get('name', uid)}：{exc!r}")
+            else:
+                # 新浪博客抓取（默认）
+                data = self.fetch_recent(uid, name=blogger.get("name", ""),
+                                         hours=hours, max_articles=max_articles)
+                if data["articles"]:
+                    collected.append(data)
         return collected
 
 

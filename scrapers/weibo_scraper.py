@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+微博抓取器 - 通过 RSSHub 获取微博内容
+因为微博需要登录且有反爬机制，直接抓取困难，所以使用 RSSHub 服务
+"""
+import re
+import time
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
+import requests
+
+
+class WeiboScraper:
+    """微博抓取器（通过 RSSHub）"""
+
+    def __init__(self, rsshub_base="https://rsshub.app", timeout=30):
+        """
+        初始化微博抓取器
+
+        Args:
+            rsshub_base: RSSHub 服务地址
+            timeout: 请求超时时间（秒）
+        """
+        self.rsshub_base = rsshub_base.rstrip("/")
+        self.timeout = timeout
+        self.user_agent = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+
+    def fetch_weibo_user(self, uid: str, limit: int = 10) -> List[Dict]:
+        """
+        抓取指定用户的微博
+
+        Args:
+            uid: 微博用户ID
+            limit: 最多返回多少条
+
+        Returns:
+            微博列表，每条包含 title, content, link, pub_date
+        """
+        # RSSHub 微博用户路由：/weibo/user/{uid}
+        url = f"{self.rsshub_base}/weibo/user/{uid}"
+
+        try:
+            headers = {"User-Agent": self.user_agent}
+            response = requests.get(url, headers=headers, timeout=self.timeout)
+            response.raise_for_status()
+
+            # 解析 RSS XML
+            root = ET.fromstring(response.content)
+
+            weibos = []
+            for item in root.findall(".//item")[:limit]:
+                title = item.findtext("title", "").strip()
+                link = item.findtext("link", "").strip()
+                pub_date_str = item.findtext("pubDate", "")
+                description = item.findtext("description", "").strip()
+
+                # 清理 HTML 标签
+                import re
+                from html import unescape
+                clean_content = re.sub(r'<[^>]+>', '', description)
+                clean_content = unescape(clean_content).strip()
+
+                # 解析发布时间
+                pub_date = None
+                if pub_date_str:
+                    try:
+                        from dateutil.parser import parse
+                        pub_date = parse(pub_date_str)
+                    except Exception:
+                        pass
+
+                weibos.append({
+                    "title": title,
+                    "content": clean_content,
+                    "link": link,
+                    "pub_date": pub_date,
+                    "uid": uid
+                })
+
+            return weibos
+
+        except Exception as e:
+            print(f"     [WARN] 抓取微博用户 {uid} 失败：{e}")
+            return []
+
+    def fetch_recent(self, uid: str, name: str = "", hours: int = 24,
+                    max_articles: int = 6) -> Dict:
+        """
+        抓取用户近 N 小时内的微博
+
+        Args:
+            uid: 微博用户ID
+            name: 用户显示名（仅用于日志和输出）
+            hours: 时间窗口
+            max_articles: 最多取几条
+
+        Returns:
+            dict: {name, uid, articles: [...], available: bool}
+        """
+        label = name or uid
+        result = {"name": name, "uid": str(uid), "articles": [], "available": False}
+
+        try:
+            weibos = self.fetch_weibo_user(uid, limit=20)
+        except Exception as exc:
+            print(f"     [!] {label} 微博抓取失败：{exc!r}")
+            return result
+
+        if not weibos:
+            print(f"     [!] {label} 微博解析不出内容，可能是RSSHub服务问题")
+            return result
+
+        # 按时间过滤
+        cutoff = datetime.now(weibos[0]["pub_date"].tzinfo if weibos[0]["pub_date"] else None) - timedelta(hours=hours)
+        now = datetime.now(weibos[0]["pub_date"].tzinfo if weibos[0]["pub_date"] else None)
+
+        fresh = [w for w in weibos
+                if w["pub_date"] and cutoff <= w["pub_date"] <= now][:max_articles]
+
+        result["available"] = True
+        if not fresh:
+            print(f"     {label} 近 {hours} 小时内无更新")
+            return result
+
+        # 转换为标准格式
+        for weibo in fresh:
+            result["articles"].append({
+                "title": weibo["title"][:50] + "..." if len(weibo["title"]) > 50 else weibo["title"],
+                "url": weibo["link"],
+                "published": weibo["pub_date"].strftime("%Y-%m-%d %H:%M") if weibo["pub_date"] else "",
+                "body": weibo["content"][:500]  # 限制长度
+            })
+
+        print(f"     {label} 收录 {len(result['articles'])} 条微博")
+        return result
+
+
+def fetch_weibo_blogger(uid: str, name: str, hours: int = 24) -> Dict:
+    """
+    便捷函数：抓取单个微博博主
+
+    Args:
+        uid: 微博用户ID
+        name: 博主名称
+        hours: 时间窗口
+
+    Returns:
+        博主数据字典
+    """
+    scraper = WeiboScraper()
+    return scraper.fetch_recent(uid, name, hours=hours)

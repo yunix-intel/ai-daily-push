@@ -16,15 +16,15 @@ from datetime import datetime, timezone
 class TwitterScraper:
     """Twitter 财经传言抓取器"""
 
-    # 重要财经账号列表（示例）
+    # 重要财经传言账号列表（爆料型/内幕型）
     DEFAULT_ACCOUNTS = [
-        "zerohedge",           # Zero Hedge - 财经新闻聚合
-        "WSJ",                 # 华尔街日报
-        "Bloomberg",           # 彭博社
-        "FinancialTimes",      # 金融时报
-        "markets",             # Bloomberg Markets
-        "carlquintanilla",     # CNBC 主持人
-        "muddywatersre",       # 浑水研究（做空机构）
+        "unusual_whales",      # 🐋 期权异动监测（大单追踪）
+        "HindenburgRes",       # 🔍 兴登堡研究（做空机构，重磅爆料）
+        "muddywatersre",       # 💧 浑水研究（做空机构）
+        "CitronResearch",      # 🍋 香橼研究（做空机构）
+        "zerohedge",           # ⚡ Zero Hedge（快速市场消息）
+        "DeItaone",            # 📊 实时新闻爆料
+        "Fxhedgers",           # 💱 外汇市场传言
     ]
 
     def __init__(self, rsshub_base="https://rsshub.app", timeout=30):
