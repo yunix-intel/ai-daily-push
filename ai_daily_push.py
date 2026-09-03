@@ -1659,6 +1659,43 @@ def main():
         print(f"     [WARN] 指标提取失败，跳过：{e}")
         news_metrics = []
 
+    # [新增] 全文翻译（AI日报）
+    print("[1.7/4] 全文翻译英文新闻 ...")
+    try:
+        from article_translator import batch_translate_articles
+
+        # 创建 LLM 调用包装器
+        def llm_caller(system_prompt, user_prompt, model=None):
+            """LLM 调用包装器，返回纯文本"""
+            try:
+                result = call_llm_json(system_prompt, user_prompt, model=model)
+                # 如果返回的是dict，转为JSON字符串
+                if isinstance(result, dict):
+                    return json.dumps(result, ensure_ascii=False)
+                return str(result)
+            except Exception as e:
+                print(f"     [WARN] LLM调用失败：{e}")
+                return ""
+
+        # 合并所有新闻条目
+        all_news_items = []
+        for section in combined_report.get('sections', []):
+            all_news_items.extend(section.get('items', []))
+
+        if all_news_items:
+            # 批量翻译文章（最多5篇）
+            translated_count = batch_translate_articles(
+                all_news_items,
+                llm_caller=llm_caller,
+                max_count=5
+            )
+            print(f"     ✓ 全文翻译完成：{translated_count} 篇")
+        else:
+            print(f"     无新闻数据，跳过全文翻译")
+
+    except Exception as e:
+        print(f"     [WARN] 全文翻译失败，跳过：{e}")
+
     data = shape(combined_report, market_insights=market_insights, news_metrics=news_metrics)
     print(f"     成功：共 {data['meta']['total']} 条，版块 {[s['label'] for s in data['sections']]}")
 
