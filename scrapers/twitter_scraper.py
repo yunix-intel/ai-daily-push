@@ -309,25 +309,17 @@ class TwitterScraper:
 
 def fetch_twitter_rumors(llm_caller, accounts: Optional[List[str]] = None,
                         max_rumors: int = 5) -> List[Dict]:
-    """
-    便捷函数：抓取并过滤 Twitter 财经传言
-
-    Args:
-        llm_caller: LLM 调用函数
-        accounts: Twitter 账号列表
-        max_rumors: 最多返回多少条传言
-
-    Returns:
-        传言列表
-    """
+    """便捷函数：抓取并过滤 Twitter 财经传言。"""
     scraper = TwitterScraper()
 
     # 抓取推文
     print(f"     抓取 {len(accounts or scraper.DEFAULT_ACCOUNTS)} 个账号的推文...")
-    tweets = scraper.fetch_multiple_accounts(accounts=accounts, limit_per_account=5)
+    fetch_result = scraper.fetch_multiple_accounts(accounts=accounts, limit_per_account=5)
+    tweets = fetch_result["tweets"]
     print(f"     获取到 {len(tweets)} 条推文")
 
-    if not tweets:
+    if not fetch_result["available"]:
+        print(f"     [WARN] Twitter 数据源不可用：{fetch_result.get('error', '未知错误')}")
         return []
 
     # 过滤并提取传言

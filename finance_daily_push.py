@@ -1342,6 +1342,10 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         if os.path.exists(history_file):
             with open(history_file, 'r', encoding='utf-8') as f:
                 history_data = json.load(f)
+
+            # push_history_recorder 早期版本写入列表，新版本可能写入摘要对象。
+            # 仅在字典中存在明确时间字段时覆盖默认收录窗口。
+            if isinstance(history_data, dict):
                 last_push_str = history_data.get('lastPushTime')
                 if last_push_str:
                     from dateutil.parser import parse
@@ -1353,6 +1357,8 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
                     days_span = (window_end - window_start).total_seconds() / 86400
                     if days_span > 1.5:  # 超过1.5天视为跨天
                         print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
+            elif not isinstance(history_data, list):
+                print("     [WARN] 推送历史格式无法识别，使用默认收录窗口")
     except Exception as e:
         print(f"     [WARN] 无法读取上次推送时间，使用默认{window_hours}小时窗口：{e}")
 
@@ -1419,10 +1425,13 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         # 追踪博主的观点摘要。与 analysis 分开：analysis 是对新闻事实的归纳，
         # 这里是个人判断，页面上必须让读者一眼看出是「谁的看法」。
         "bloggerViews": blogger_views or [],
-        # Twitter 财经传言与媒体报道（分类）
+        # Twitter 财经传言与媒体报道（分类）。保留抓取状态，
+        # 让页面在 RSSHub 不可用时显示降级卡片，而不是静默隐藏板块。
         "twitter": {
             "rumors": (twitter_content or {}).get("rumors", []),
             "media": (twitter_content or {}).get("media", []),
+            "available": (twitter_content or {}).get("available", True),
+            "errors": (twitter_content or {}).get("errors", {}),
         },
     }
 
