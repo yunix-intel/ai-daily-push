@@ -1758,63 +1758,15 @@ def main():
         print("     [!] 未抓到任何财经条目，终止本次财经日报（不影响 AI 日报）。")
         return
 
-    print(f"     [2.1] LLM 智能分类（区域+重要性）...")
-    try:
-        # 包装 call_llm_json，使其返回字符串供 news_classifier 使用
-        def llm_wrapper(system_prompt, user_prompt, model=None):
-            result = call_llm_json(system_prompt, user_prompt, model=model)
-            # call_llm_json 返回 dict，转为 JSON 字符串
-            return json.dumps(result, ensure_ascii=False)
+    print("     [2.1] 使用关键词分类与默认重要性评分（跳过可选 LLM 分类）...")
+    items_domestic = list(items_grouped["domestic"])
+    items_international = list(items_grouped["international"])
+    for item in all_items:
+        item.setdefault("region", "domestic" if item in items_domestic else "international")
+        item.setdefault("importance_score", 5)
+    print(f"     使用来源分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
 
-        # 区域重新分类（解决格隆汇等来源的分类问题）
-        try:
-            regions = classify_news_region_batch(all_items, llm_wrapper)
-        except Exception as e:
-            print(f"     [!] 区域分类失败，使用原始分类：{e}")
-            regions = []
-
-        # 重要性评分
-        try:
-            scores = score_news_importance_batch(all_items, llm_wrapper)
-        except Exception as e:
-            print(f"     [!] 重要性评分失败，使用默认分数：{e}")
-            scores = []
-
-        # 先给所有条目写入兜底的 region / importance_score，再让 LLM 结果覆盖。
-        # 这两个键原先只在分类成功的分支里赋值，LLM 一失败就双双缺失，
-        # 下游 is_worth_translating() 因此对每条都返回 False（实测全文翻译 0/54）。
-        for item in all_items:
-            item.setdefault('region', classify_news_category(item))
-            item.setdefault('importance_score', 5)
-
-        # 更新分类和评分
-        if regions and len(regions) == len(all_items):
-            for i, item in enumerate(all_items):
-                item['region'] = regions[i]
-                item['importance_score'] = scores[i] if i < len(scores) else 5
-
-            # 重新分组
-            items_domestic = [item for item in all_items if item.get('region') == 'domestic']
-            items_international = [item for item in all_items if item.get('region') == 'international']
-
-            print(f"     重新分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
-
-            # 按重要性排序
-            items_domestic.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
-            items_international.sort(key=lambda x: x.get('importance_score', 5), reverse=True)
-        else:
-            # 分类失败，使用原始分组（region / importance_score 已在上面兜底写入）
-            items_domestic = items_grouped["domestic"]
-            items_international = items_grouped["international"]
-            print(f"     使用原始分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
-
-    except Exception as exc:
-        print(f"     [!] 智能分类模块异常：{exc}")
-        items_domestic = items_grouped["domestic"]
-        items_international = items_grouped["international"]
-        # 默认评分
-        for item in items_domestic + items_international:
-            item['importance_score'] = 5
+    # 国际标题摘要翻译仍保留；失败时逐条保留原文。
 
     # 翻译国际新闻
     if items_international:
@@ -1829,69 +1781,10 @@ def main():
         except Exception as exc:
             print(f"     [!] 全文翻译失败，跳过：{exc}")
 
-    # 识别突发事件
-    print("     [2.4] 识别突发事件 ...")
-    try:
-        # 使用相同的 llm_wrapper
-        def llm_wrapper(system_prompt, user_prompt, model=None):
-            result = call_llm_json(system_prompt, user_prompt, model=model)
-            return json.dumps(result, ensure_ascii=False)
-
-        breaking_events_domestic = identify_breaking_news(items_domestic, llm_wrapper) if items_domestic else []
-        breaking_events_international = identify_breaking_news(items_international, llm_wrapper) if items_international else []
-
-        # 新增：根据 _region_hint 重新分配（防止分类错误）
-        breaking_events_domestic_final = []
-        breaking_events_international_final = []
-
-        for event in breaking_events_domestic:
-            if event.get('_region_hint') == 'international':
-                print(f"     [重新分类] {event.get('title', '')[:40]}... → 国际")
-                breaking_events_international_final.append(event)
-            else:
-                breaking_events_domestic_final.append(event)
-
-        for event in breaking_events_international:
-            if event.get('_region_hint') == 'domestic':
-                print(f"     [重新分类] {event.get('title', '')[:40]}... → 国内")
-                breaking_events_domestic_final.append(event)
-            else:
-                breaking_events_international_final.append(event)
-
-        # 使用重新分类后的结果
-        breaking_events_domestic = breaking_events_domestic_final
-        breaking_events_international = breaking_events_international_final
-
-        print(f"     突发事件（重新分类后）：国内 {len(breaking_events_domestic)} 个，国际 {len(breaking_events_international)} 个")
-
-        # 分析突发事件影响
-        if breaking_events_domestic or breaking_events_international:
-            print("     [2.5] 分析突发事件影响 ...")
-            try:
-                from event_impact_analyzer import EventImpactAnalyzer
-
-                # 创建 LLM 调用包装器
-                def impact_llm_caller(system_prompt, user_prompt, model=None):
-                    return call_llm_json(system_prompt, user_prompt, model=model)
-
-                analyzer = EventImpactAnalyzer(llm_caller=impact_llm_caller)
-
-                # 分析国内突发事件
-                if breaking_events_domestic:
-                    breaking_events_domestic = analyzer.analyze_events_batch(breaking_events_domestic)
-
-                # 分析国际突发事件
-                if breaking_events_international:
-                    breaking_events_international = analyzer.analyze_events_batch(breaking_events_international)
-
-                print(f"     影响分析完成")
-            except Exception as exc:
-                print(f"     [!] 影响分析失败，跳过：{exc}")
-
-    except Exception as exc:
-        print(f"     [!] 突发事件识别失败：{exc}")
-        breaking_events_domestic = []
-        breaking_events_international = []
+    print("     [2.4] 使用启发式突发事件识别（跳过可选 LLM 识别）...")
+    breaking_events_domestic = identify_breaking_news(items_domestic, None) if items_domestic else []
+    breaking_events_international = identify_breaking_news(items_international, None) if items_international else []
+    print(f"     突发事件：国内 {len(breaking_events_domestic)} 个，国际 {len(breaking_events_international)} 个")
 
     # 分层：核心必读（8-10分）、重要要闻（5-7分）
     must_read_domestic = [item for item in items_domestic if item.get('importance_score', 0) >= 8]
