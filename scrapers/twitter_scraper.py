@@ -47,7 +47,7 @@ class TwitterScraper:
         "https://rsshub.ktachibana.party",
     ]
 
-    def __init__(self, rsshub_base=None, timeout=30):
+    def __init__(self, rsshub_base=None, timeout=None):
         """
         初始化 Twitter 抓取器
 
@@ -57,7 +57,7 @@ class TwitterScraper:
         """
         # 如果指定了单一地址，只用它；否则从镜像列表依次尝试
         self.rsshub_mirrors = [rsshub_base.rstrip("/")] if rsshub_base else self.DEFAULT_MIRRORS
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else float(os.getenv("RSSHUB_TIMEOUT", "10"))
         self.user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "

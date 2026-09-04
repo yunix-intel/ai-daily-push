@@ -4,66 +4,47 @@ on:
   schedule:
     # UTC 23:00 = 北京时间 07:00（次日）
     - cron: '0 23 * * *'
-  workflow_dispatch:           # 允许在 Actions 页面手动触发测试
+  workflow_dispatch:
 
 permissions:
-  contents: write  # 修改为 write 以便提交推送历史
+  contents: write
   pages: write
   id-token: write
 
 concurrency:
   group: daily-push-${{ github.ref }}
-  cancel-in-progress: true  # 防止手动触发和定时触发冲突
+  cancel-in-progress: true
+
+env:
+  CRON_HOUR: "23"
+  CRON_MINUTE: "0"
+  LLM_MAX_CONCURRENCY: "2"
+  RSSHUB_TIMEOUT: "10"
 
 jobs:
-  build-and-push:
+  ai-daily:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: 检出代码
         uses: actions/checkout@v7
-
       - name: 配置 Python
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-
-      # 检查互斥锁，防止手动触发和定时触发冲突
-      - name: 检查是否有重复运行
-        id: lock_check
-        run: |
-          python workflow_lock.py
-          echo "lock_acquired=true" >> $GITHUB_OUTPUT
-
-      - name: 清除 Python 缓存
-        if: steps.lock_check.outputs.lock_acquired == 'true'
-        run: |
-          find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-          find . -type f -name "*.pyc" -delete 2>/dev/null || true
-
-      # 趋势分析要跟历史快照对比（data/market_data 下的按日 JSON）。
-      # 这个目录被 .gitignore 排除，CI 每次都是干净检出，不缓存的话
-      # 「趋势分析 / 模型分布变化」永远只能报「无足够历史数据」。
-      # restore-keys 让今天的运行能命中最近一次的缓存。
       - name: 恢复市场数据历史快照
         uses: actions/cache@v5
         with:
           path: data/market_data
-          key: market-data-${{ github.run_id }}
-          restore-keys: |
-            market-data-
-
-      # 全文翻译缓存（7 天有效）。同样被 gitignore 排除，不缓存的话
-      # 每天都要把同一批文章重新抓一遍、重新过一遍 LLM。
+          key: ai-market-data-${{ github.run_id }}
+          restore-keys: market-data-
       - name: 恢复全文翻译缓存
         uses: actions/cache@v5
         with:
           path: translations
-          key: translations-${{ github.run_id }}
-          restore-keys: |
-            translations-
-
-      - name: 第一条：AI 日报（图文卡片 + AI 日报网页）
-        if: steps.lock_check.outputs.lock_acquired == 'true'
+          key: ai-translations-${{ github.run_id }}
+          restore-keys: translations-
+      - name: AI 日报
         env:
           WECOM_CORPID: ${{ secrets.WECOM_CORPID }}
           WECOM_CORPSECRET: ${{ secrets.WECOM_CORPSECRET }}
@@ -78,13 +59,34 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
-          CRON_HOUR: "23"
-          CRON_MINUTE: "0"
         run: python ai_daily_push.py
+      - name: 上传 AI 页面和状态
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-daily-output
+          path: |
+            ai_daily_dashboard.html
+            translations
+          if-no-files-found: warn
 
-      - name: 第二条：财经日报（markdown + 财经网页）
-        if: steps.lock_check.outputs.lock_acquired == 'true'
-        continue-on-error: true
+  finance-daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+      - name: 配置 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: 恢复全文翻译缓存
+        uses: actions/cache@v5
+        with:
+          path: translations
+          key: finance-translations-${{ github.run_id }}
+          restore-keys: translations-
+      - name: 财经日报
         env:
           WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
@@ -93,21 +95,44 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
-          CRON_HOUR: "23"
-          CRON_MINUTE: "0"
         run: python finance_daily_push.py
+      - name: 上传财经页面和状态
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: finance-daily-output
+          path: finance_dashboard.html
+          if-no-files-found: warn
 
-      # --expected-time 必须与上面第 8 行的 cron 保持一致（UTC 23:00），
-      # 否则报告里的「延迟」列全是错的——它正是判断推送准不准时的依据。
+  publish:
+    if: always()
+    needs: [ai-daily, finance-daily]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+      - name: 下载 AI 页面
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-daily-output
+          path: ai-output
+        continue-on-error: true
+      - name: 下载财经页面
+        uses: actions/download-artifact@v4
+        with:
+          name: finance-daily-output
+          path: finance-output
+        continue-on-error: true
+      - name: 记录日报运行状态
+        run: |
+          echo "AI job result: ${{ needs.ai-daily.result }}"
+          echo "Finance job result: ${{ needs.finance-daily.result }}"
+          if [ "${{ needs.ai-daily.result }}" != "success" ]; then echo "::warning::AI 日报 job 未成功"; fi
+          if [ "${{ needs.finance-daily.result }}" != "success" ]; then echo "::warning::财经日报 job 未成功"; fi
       - name: 记录推送时间
         if: always()
         run: python push_history_recorder.py --expected-time "23:00" --task "AI Daily Push"
-
-      # 推送历史只是记账，不该阻断发布。远端在本次运行期间被别的提交推进时
-      # （实测 08-31 定时运行就撞上了：跑到这一步时 main 已被本地连推三个提交），
-      # git push 会被拒，而这一步失败会连带跳过 Pages 产物准备与部署——
-      # 两份日报明明都生成成功了，当天页面却完全没更新。
-      # 所以：先 rebase 再推、重试三次；最终仍失败也只留 warning，不失败整个 job。
       - name: 提交推送历史
         if: always()
         continue-on-error: true
@@ -125,35 +150,34 @@ jobs:
               echo "推送历史已提交"
               exit 0
             fi
-            echo "第 $i 次推送被拒（远端已前进），rebase 后重试"
+            echo "第 $i 次推送被拒，rebase 后重试"
             git pull --rebase origin "${GITHUB_REF_NAME}" || break
             sleep 5
           done
-          echo "::warning::推送历史提交失败，已跳过；不影响本次日报发布"
-          exit 0
-
-      - name: 准备 Pages 静态产物（两个独立页面）
+          echo "::warning::推送历史提交失败；不影响本次页面发布"
+      - name: 准备 Pages 静态产物
         run: |
           mkdir -p public
-          cp ai_daily_dashboard.html public/index.html
-          # 财经日报若失败则不会产出 html，此时只发布 AI 日报页面，不让整个部署失败
-          if [ -f finance_dashboard.html ]; then
-            cp finance_dashboard.html public/finance.html
+          if [ -f ai-output/ai_daily_dashboard.html ]; then
+            cp ai-output/ai_daily_dashboard.html public/index.html
           else
-            echo "finance_dashboard.html 不存在，跳过财经页面发布"
+            echo "::warning::AI 页面缺失"
           fi
-          # 添加推送历史报告
-          if [ -f push_history_report.html ]; then
-            cp push_history_report.html public/push_history.html
+          if [ -f finance-output/finance_dashboard.html ]; then
+            cp finance-output/finance_dashboard.html public/finance.html
+          else
+            echo "::warning::财经页面缺失"
           fi
-
+          if [ -f push_history_report.html ]; then cp push_history_report.html public/push_history.html; fi
+          test -f public/index.html || { echo "::error::没有可发布的 AI 页面"; exit 1; }
       - name: 上传 Pages 产物
         uses: actions/upload-pages-artifact@v5
         with:
           path: public
 
   deploy:
-    needs: build-and-push
+    if: always() && needs.publish.result == 'success'
+    needs: publish
     runs-on: ubuntu-latest
     environment:
       name: github-pages
