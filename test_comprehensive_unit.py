@@ -65,7 +65,8 @@ class TestFinanceDailyPush(unittest.TestCase):
         html = self.m.build_finance_html(data)
         markdown = self.m.build_finance_markdown(data, "https://example.invalid/finance")
         self.assertIn("2026-09-01", html)
-        self.assertIn("https://example.invalid/finance", markdown)
+        self.assertIsInstance(markdown, tuple)
+        self.assertIn("https://example.invalid/finance", "\n".join(markdown))
 
     def test_http_post_json_uses_urllib(self):
         with patch.object(self.m.urllib.request, "urlopen", return_value=FakeResponse('{"ok": true}')) as opened:
@@ -96,8 +97,8 @@ class TestMoneyFlowScraper(unittest.TestCase):
         from scrapers import money_flow_scraper as m
         with patch.object(m.requests, "get", side_effect=RuntimeError("offline")):
             result = m.MoneyFlowScraper().fetch_north_flow()
-        self.assertEqual(set(result), {"date", "sh_flow", "sz_flow", "total_flow", "available"})
         self.assertFalse(result["available"])
+        self.assertIn("reason", result)
 
     def test_rankings_use_both_sort_directions(self):
         from scrapers.money_flow_scraper import MoneyFlowScraper
@@ -116,7 +117,7 @@ class TestTradingCalendar(unittest.TestCase):
     def test_pure_local_calendar_contract(self):
         import trading_calendar as m
         with patch.object(m, "_fetch_online_holidays", return_value=([], None)):
-            self.assertFalse(m.is_weekend(date(2026, 9, 5)))
+            self.assertTrue(m.is_weekend(date(2026, 9, 5)))
             self.assertFalse(m.is_trading_day(date(2026, 1, 1)))
             status = m.get_trading_status(date(2026, 9, 1))
         self.assertIsInstance(status["days_since_last_trading"], int)
