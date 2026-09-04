@@ -433,15 +433,14 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
 
   // 资金流向板块
   const moneyFlow = DATA.moneyFlow || {};
-  // 沪深交易所已停止披露北向资金盘中净流入，接口只剩占位 0；
-  // available=false 时整块隐藏，免得把「+0.00 亿」当成真实行情读。
-  const showNorth = moneyFlow.north_flow && moneyFlow.north_flow.available
-                    && moneyFlow.north_flow.total_flow !== undefined;
+  const north = moneyFlow.north_flow || {};
+  const showNorth = north.available && north.total_flow !== undefined;
+  const hasNorthStatus = !showNorth && (north.reason || north.error || north.collection_mode === 'post_close');
   const hasSector = moneyFlow.sector_flow && ((moneyFlow.sector_flow.top_inflow||[]).length
                     || (moneyFlow.sector_flow.top_outflow||[]).length);
   const hasStock = moneyFlow.stock_flow && ((moneyFlow.stock_flow.top_inflow||[]).length
                    || (moneyFlow.stock_flow.top_outflow||[]).length);
-  if(showNorth || hasSector || hasStock) {
+  if(showNorth || hasNorthStatus || hasSector || hasStock) {
     main+='<div class="market-divider" id="money-flow-section"><h2>💰 资金流向</h2></div>';
 
     // 北向资金
@@ -467,9 +466,9 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
       main+='</div></div>';
     }
     // 北向不可用时渲染说明行，避免读者误以为抓取失败
-    else if(moneyFlow.north_flow && !moneyFlow.north_flow.available && moneyFlow.north_flow.reason) {
+    else if(moneyFlow.north_flow && !moneyFlow.north_flow.available && (moneyFlow.north_flow.reason || moneyFlow.north_flow.error)) {
       main+='<div class="block"><div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">';
-      main+='🔺 北向资金：'+esc(moneyFlow.north_flow.reason)+'</div></div>';
+      main+='🔵 盘后北向资金：'+esc(moneyFlow.north_flow.reason || moneyFlow.north_flow.error)+'</div></div>';
     }
 
     // 行业资金流向
