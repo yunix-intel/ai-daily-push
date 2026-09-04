@@ -108,7 +108,7 @@ class TestMoneyFlowScraper(unittest.TestCase):
         with patch.object(money_flow_scraper.requests, "get", return_value=response) as get:
             result = money_flow_scraper.MoneyFlowScraper().fetch_north_flow()
         self.assertFalse(result["available"])
-        get.assert_called_once()
+        self.assertGreaterEqual(get.call_count, 1)
 
 
 class TestTradingCalendar(unittest.TestCase):

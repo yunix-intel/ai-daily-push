@@ -6,7 +6,9 @@
 import requests
 import json
 import re
-from datetime import datetime
+from datetime import datetime, date
+import math
+import os
 
 
 class MoneyFlowScraper:
@@ -64,25 +66,83 @@ class MoneyFlowScraper:
             return []
         return data['data']['diff']
 
-    def fetch_north_flow(self):
-        """
-        获取北向资金数据（沪股通+深股通）
+    def fetch_north_flow(self, target_date=None):
+        """获取最近已收盘交易日的北向资金日数据。"""
+        target = self._resolve_target_date(target_date)
+        errors = []
+        for source, fetcher in (("eastmoney", self._fetch_eastmoney_post_close),
+                                ("10jqka", self._fetch_10jqka_post_close)):
+            try:
+                result = fetcher(target)
+                if result and result.get("available"):
+                    result["attempted_sources"] = [source]
+                    return result
+                errors.append(f"{source}:未返回有效盘后数据")
+            except Exception as exc:
+                errors.append(f"{source}:{type(exc).__name__}")
+        return self._empty_north_flow(
+            "；".join(errors) or "东方财富和同花顺均未返回有效盘后数据"
+        )
 
-        注意：沪深交易所自 2024 年 8 月起不再披露北向资金盘中净流入，
-        接口只剩占位值，因此这里会把 available 标为 False，由展示层决定是否隐藏，
-        避免把「+0.00 亿元」当成真实数据展示。
-
-        Returns:
-            dict: 北向资金数据
-        """
-        params = {'fields1': 'f1,f2,f3,f4', 'fields2': 'f51,f52,f54,f56', 'ut': self.UT}
-
+    def _resolve_target_date(self, target_date=None):
+        if target_date:
+            return target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
+        current = datetime.now().date()
         try:
-            data = self._get_json("/api/qt/kamt/get", params)
-            return self._parse_north_flow(data)
-        except Exception as e:
-            print(f"     [WARN] 北向资金获取失败: {e}")
-            return self._empty_north_flow()
+            from trading_calendar import get_last_trading_day, is_trading_day
+            return (current if is_trading_day(current) else get_last_trading_day(current)).isoformat()
+        except Exception:
+            return current.isoformat()
+
+    def _fetch_eastmoney_post_close(self, target_date):
+        params = {'fields1': 'f1,f2,f3,f4', 'fields2': 'f51,f52,f53,f54,f55,f56',
+                  'klt': '101', 'lmt': '30', 'ut': self.UT}
+        data = self._get_json("/api/qt/kamt.kline/get", params)
+        return self._parse_post_close_kline(data, target_date, "eastmoney")
+
+    def _fetch_10jqka_post_close(self, target_date):
+        """读取同花顺公开的北向资金日线接口。"""
+        url = "https://data.10jqka.com.cn/hsgt/history/type/north/date/day/"
+        response = requests.get(url, headers={**self.headers, "Referer": "https://data.10jqka.com.cn/hsgt/"},
+                                timeout=self.timeout)
+        response.raise_for_status()
+        payload = response.json()
+        daily = ((payload.get("data") or {}).get("zhuri") or {})
+        dates = daily.get("date") or []
+        index = next((i for i, value in enumerate(dates) if str(value) == target_date), None)
+        if index is None:
+            raise ValueError("同花顺盘后记录日期不匹配")
+        sh = self._num((daily.get("h") or [])[index]) / 100000000
+        total = self._num((daily.get("total") or [])[index]) / 100000000
+        sz = total - sh
+        if not all(math.isfinite(value) for value in (sh, sz, total)):
+            raise ValueError("同花顺盘后数据不是有限数值")
+        return {"date": target_date, "trade_date": target_date,
+                "sh_flow": round(sh, 2), "sz_flow": round(sz, 2),
+                "total_flow": round(total, 2), "available": True,
+                "collection_mode": "post_close", "source": "10jqka",
+                "reason": "", "stale": False}
+
+    def _parse_post_close_kline(self, data, target_date, source):
+        rows = (data or {}).get("data", {}).get("hk2sh", [])
+        sz_rows = (data or {}).get("data", {}).get("hk2sz", [])
+        if isinstance(rows, dict):
+            rows = [f"{target_date},{rows.get('dayNetAmtIn', 0)},0,0"]
+        if isinstance(sz_rows, dict):
+            sz_rows = [f"{target_date},{sz_rows.get('dayNetAmtIn', 0)},0,0"]
+        sh = next((row for row in rows if str(row).split(",", 1)[0] == target_date), None)
+        sz = next((row for row in sz_rows if str(row).split(",", 1)[0] == target_date), None)
+        if not sh or not sz:
+            raise ValueError("盘后数据日期不匹配")
+        sh_value = self._num(str(sh).split(",")[1]) / 100000000
+        sz_value = self._num(str(sz).split(",")[1]) / 100000000
+        if sh_value == 0 and sz_value == 0:
+            raise ValueError("东方财富仅返回北向占位零值")
+        return {"date": target_date, "trade_date": target_date,
+                "sh_flow": round(sh_value, 2), "sz_flow": round(sz_value, 2),
+                "total_flow": round(sh_value + sz_value, 2), "available": True,
+                "collection_mode": "post_close", "source": source,
+                "reason": "", "stale": False}
 
     def fetch_sector_flow(self, top_n=5):
         """
@@ -184,10 +244,14 @@ class MoneyFlowScraper:
         """返回空的北向资金数据"""
         return {
             "date": datetime.now().strftime("%Y-%m-%d"),
+            "trade_date": None,
             "sh_flow": 0,
             "sz_flow": 0,
             "total_flow": 0,
             "available": False,
+            "collection_mode": "post_close",
+            "source": "none",
+            "stale": False,
             "reason": reason,
         }
 

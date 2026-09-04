@@ -1648,8 +1648,9 @@ def main():
                 return fallback
 
         north_flow = _safe_fetch(
-            "北向资金", scraper.fetch_north_flow,
-            {"available": False, "error": "数据抓取失败"})
+            "盘后北向资金", scraper.fetch_north_flow,
+            {"available": False, "source": "none", "collection_mode": "post_close",
+             "error": "数据抓取失败", "reason": "盘后东方财富和同花顺均未返回有效数据"})
         sector_flow = _safe_fetch(
             "行业资金流向", lambda: scraper.fetch_sector_flow(top_n=5),
             {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
@@ -1666,7 +1667,7 @@ def main():
         if north_flow.get('available'):
             print(f"     北向资金合计：{north_flow.get('total_flow', 0):+.2f} 亿元")
         else:
-            print("     北向资金：交易所已停止披露盘中净流入，跳过该板块")
+            print("     盘后北向资金：东方财富和同花顺均未返回有效数据")
         if sector_flow and sector_flow.get('top_inflow'):
             print(f"     行业流入 Top 1：{sector_flow['top_inflow'][0].get('name', 'N/A')}"
                   f"（{sector_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）")

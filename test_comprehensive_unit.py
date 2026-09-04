@@ -124,7 +124,60 @@ class TestTradingCalendar(unittest.TestCase):
         self.assertIn(status["market_status"], {"trading", "post_holiday"})
 
 
-class TestAlerting(unittest.TestCase):
+
+
+class TestNorthboundPostCloseFallback(unittest.TestCase):
+    def test_eastmoney_success_is_post_close(self):
+        from scrapers.money_flow_scraper import MoneyFlowScraper
+        scraper = MoneyFlowScraper()
+        payload = {"data": {
+            "hk2sh": ["2026-09-03,120000000,0,0"],
+            "hk2sz": ["2026-09-03,-20000000,0,0"],
+        }}
+        with patch.object(scraper, "_get_json", return_value=payload):
+            result = scraper.fetch_north_flow("2026-09-03")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["collection_mode"], "post_close")
+        self.assertEqual(result["source"], "eastmoney")
+        self.assertEqual(result["total_flow"], 1.0)
+
+    def test_falls_back_to_tonghuashun_after_invalid_primary(self):
+        from scrapers.money_flow_scraper import MoneyFlowScraper
+        scraper = MoneyFlowScraper()
+        with patch.object(scraper, "_fetch_eastmoney_post_close", side_effect=ValueError("invalid")):
+            with patch.object(scraper, "_fetch_10jqka_post_close", return_value={
+                "available": True, "source": "10jqka", "collection_mode": "post_close",
+                "trade_date": "2026-09-03", "date": "2026-09-03",
+                "sh_flow": 1.2, "sz_flow": -0.2, "total_flow": 1.0,
+            }) as fallback:
+                result = scraper.fetch_north_flow("2026-09-03")
+        self.assertEqual(result["source"], "10jqka")
+        fallback.assert_called_once_with("2026-09-03")
+
+    def test_both_sources_return_structured_failure(self):
+        from scrapers.money_flow_scraper import MoneyFlowScraper
+        scraper = MoneyFlowScraper()
+        with patch.object(scraper, "_fetch_eastmoney_post_close", side_effect=TimeoutError()):
+            with patch.object(scraper, "_fetch_10jqka_post_close", side_effect=RuntimeError("blocked")):
+                result = scraper.fetch_north_flow("2026-09-03")
+        self.assertFalse(result["available"])
+        self.assertEqual(result["source"], "none")
+        self.assertIn("eastmoney", result["reason"])
+        self.assertIn("10jqka", result["reason"])
+
+    def test_valid_zero_post_close_value_is_not_placeholder(self):
+        from scrapers.money_flow_scraper import MoneyFlowScraper
+        scraper = MoneyFlowScraper()
+        payload = {"data": {
+            "hk2sh": ["2026-09-03,0,0,0"],
+            "hk2sz": ["2026-09-03,1000000,0,0"],
+        }}
+        with patch.object(scraper, "_get_json", return_value=payload):
+            result = scraper.fetch_north_flow("2026-09-03")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["sh_flow"], 0)
+        self.assertEqual(result["sz_flow"], 0.01)
+
     def test_configured_wecom_calls_urllib(self):
         import alerting as m
         response = FakeResponse('{"errcode": 0}')
