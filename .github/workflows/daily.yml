@@ -18,8 +18,9 @@ concurrency:
 env:
   CRON_HOUR: "23"
   CRON_MINUTE: "0"
-  LLM_MAX_CONCURRENCY: "2"
-  RSSHUB_TIMEOUT: "10"
+  LLM_MAX_CONCURRENCY: "1"
+  RSSHUB_TIMEOUT: "5"
+  RSSHUB_MAX_MIRRORS: "2"
 
 jobs:
   ai-daily:
@@ -105,7 +106,8 @@ jobs:
           if-no-files-found: warn
 
   publish:
-    if: always()
+    # 两份日报都成功生成后才允许更新正式 Pages，避免失败运行发布旧产物。
+    if: needs['ai-daily'].result == 'success' && needs['finance-daily'].result == 'success'
     needs: [ai-daily, finance-daily]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -117,24 +119,21 @@ jobs:
         with:
           name: ai-daily-output
           path: ai-output
-        continue-on-error: true
       - name: 下载财经页面
         uses: actions/download-artifact@v4
         with:
           name: finance-daily-output
           path: finance-output
-        continue-on-error: true
       - name: 记录日报运行状态
         run: |
-          echo "AI job result: ${{ needs.ai-daily.result }}"
-          echo "Finance job result: ${{ needs.finance-daily.result }}"
-          if [ "${{ needs.ai-daily.result }}" != "success" ]; then echo "::warning::AI 日报 job 未成功"; fi
-          if [ "${{ needs.finance-daily.result }}" != "success" ]; then echo "::warning::财经日报 job 未成功"; fi
+          echo "AI job result: ${{ needs['ai-daily'].result }}"
+          echo "Finance job result: ${{ needs['finance-daily'].result }}"
+          if [ "${{ needs['ai-daily'].result }}" != "success" ]; then echo "::warning::AI 日报 job 未成功"; fi
+          if [ "${{ needs['finance-daily'].result }}" != "success" ]; then echo "::warning::财经日报 job 未成功"; fi
       - name: 记录推送时间
         if: always()
         run: python push_history_recorder.py --expected-time "23:00" --task "AI Daily Push"
       - name: 提交推送历史
-        if: always()
         continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
@@ -176,7 +175,7 @@ jobs:
           path: public
 
   deploy:
-    if: always() && needs.publish.result == 'success'
+    if: needs.publish.result == 'success'
     needs: publish
     runs-on: ubuntu-latest
     environment:

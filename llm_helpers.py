@@ -7,7 +7,12 @@ import json
 import os
 import re
 import time
+import threading
 import urllib.request
+
+
+_LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
+_LLM_SEMAPHORE = threading.BoundedSemaphore(_LLM_MAX_CONCURRENCY)
 
 
 _BASE_URL_WARNED = False
@@ -103,8 +108,9 @@ def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180
                 },
             )
 
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            with _LLM_SEMAPHORE:
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    body = json.loads(response.read().decode("utf-8"))
 
             content = body["choices"][0]["message"]["content"]
 
@@ -171,8 +177,9 @@ def call_llm(system_prompt, user_prompt, retries=2, model=None, timeout=180):
                 },
             )
 
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            with _LLM_SEMAPHORE:
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    body = json.loads(response.read().decode("utf-8"))
 
             content = body["choices"][0]["message"]["content"]
             return content.strip()

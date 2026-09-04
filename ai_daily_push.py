@@ -26,7 +26,11 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 
 注意：网络请求在受限环境下需放行外网（本机直跑即可）。
 """
-import json, sys, os, re, html, time, urllib.parse, urllib.request, urllib.error
+import json, sys, os, re, html, time, threading, urllib.parse, urllib.request, urllib.error
+
+
+_LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
+_LLM_SEMAPHORE = threading.BoundedSemaphore(_LLM_MAX_CONCURRENCY)
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
@@ -438,8 +442,9 @@ def call_ai_llm_json(system_prompt, user_prompt, retries=1, timeout=240):
                     "Authorization": f"Bearer {api_key}",
                 },
             )
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            with _LLM_SEMAPHORE:
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    body = json.loads(response.read().decode("utf-8"))
             content = body["choices"][0]["message"]["content"]
             # 有些网关会把 JSON 包在 ```json fence 里，剥掉再解析。
             content = re.sub(r"^\s*```(?:json)?|```\s*$", "", content.strip())

@@ -24,16 +24,10 @@ class WeiboScraper:
     ]
 
     def __init__(self, rsshub_base=None, timeout=None):
-        """
-        初始化微博抓取器
-
-        Args:
-            rsshub_base: RSSHub 服务地址（可选，默认使用镜像列表）
-            timeout: 请求超时时间（秒）
-        """
-        # 如果指定了单一地址，只用它；否则从镜像列表依次尝试
+        """初始化抓取器；默认请求预算较短，避免单个账号拖垮日报。"""
         self.rsshub_mirrors = [rsshub_base.rstrip("/")] if rsshub_base else self.DEFAULT_MIRRORS
-        self.timeout = timeout if timeout is not None else float(os.getenv("RSSHUB_TIMEOUT", "10"))
+        self.timeout = timeout if timeout is not None else float(os.getenv("RSSHUB_TIMEOUT", "5"))
+        self.max_mirrors = max(1, int(os.getenv("RSSHUB_MAX_MIRRORS", "2")))
         self.user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -58,7 +52,7 @@ class WeiboScraper:
         """
         last_error = None
 
-        for mirror in self.rsshub_mirrors:
+        for mirror in self.rsshub_mirrors[:self.max_mirrors]:
             url = f"{mirror}/weibo/user/{uid}"
 
             try:

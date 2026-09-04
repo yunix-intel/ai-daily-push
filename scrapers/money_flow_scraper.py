@@ -89,8 +89,10 @@ class MoneyFlowScraper:
             return target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
         current = datetime.now().date()
         try:
-            from trading_calendar import get_last_trading_day, is_trading_day
-            return (current if is_trading_day(current) else get_last_trading_day(current)).isoformat()
+            from trading_calendar import get_last_trading_day
+            # 日报在北京时间 07:00 运行，当日市场尚未收盘；该函数会从
+            # 基准日的前一天开始回溯，因此直接传入今天即可得到最近已收盘交易日。
+            return get_last_trading_day(current).isoformat()
         except Exception:
             return current.isoformat()
 

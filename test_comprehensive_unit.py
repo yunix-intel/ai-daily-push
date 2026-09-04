@@ -165,6 +165,15 @@ class TestNorthboundPostCloseFallback(unittest.TestCase):
         self.assertIn("eastmoney", result["reason"])
         self.assertIn("10jqka", result["reason"])
 
+    def test_default_target_is_previous_completed_trading_day(self):
+        from scrapers.money_flow_scraper import MoneyFlowScraper
+        scraper = MoneyFlowScraper()
+        with patch("scrapers.money_flow_scraper.datetime") as clock:
+            clock.now.return_value.date.return_value = date(2026, 9, 4)
+            with patch("trading_calendar.get_last_trading_day", return_value=date(2026, 9, 3)) as previous:
+                self.assertEqual(scraper._resolve_target_date(), "2026-09-03")
+                previous.assert_called_once_with(date(2026, 9, 4))
+
     def test_valid_zero_post_close_value_is_not_placeholder(self):
         from scrapers.money_flow_scraper import MoneyFlowScraper
         scraper = MoneyFlowScraper()
