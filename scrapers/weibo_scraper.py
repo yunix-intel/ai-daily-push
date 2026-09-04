@@ -104,7 +104,8 @@ class WeiboScraper:
                 continue
 
         # 所有镜像都失败
-        print(f"     [WARN] 抓取微博用户 {uid} 失败，已尝试 {len(self.rsshub_mirrors)} 个镜像")
+        attempted = min(len(self.rsshub_mirrors), self.max_mirrors)
+        print(f"     [WARN] 抓取微博用户 {uid} 失败，已尝试 {attempted} 个镜像")
         return {
             "weibos": [],
             "available": False,

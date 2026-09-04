@@ -129,7 +129,8 @@ class TwitterScraper:
                 continue
 
         # 所有镜像都失败
-        print(f"     [WARN] 抓取 @{username} 失败，已尝试 {len(self.rsshub_mirrors)} 个镜像")
+        attempted = min(len(self.rsshub_mirrors), self.max_mirrors)
+        print(f"     [WARN] 抓取 @{username} 失败，已尝试 {attempted} 个镜像")
         return {
             "tweets": [],
             "available": False,
