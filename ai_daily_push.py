@@ -31,6 +31,8 @@ import json, sys, os, re, html, time, threading, urllib.parse, urllib.request, u
 
 _LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
 _LLM_SEMAPHORE = threading.BoundedSemaphore(_LLM_MAX_CONCURRENCY)
+_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "1")))
+_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "120")))
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
@@ -412,12 +414,14 @@ def _ai_llm_config():
     return api_key, base_url, model
 
 
-def call_ai_llm_json(system_prompt, user_prompt, retries=1, timeout=240):
+def call_ai_llm_json(system_prompt, user_prompt, retries=None, timeout=None):
     """调用 OpenAI 兼容接口并解析 JSON 对象。失败抛异常，由调用方降级。
 
     timeout 给到 240s：实测网关翻一批 10 条要 80~160s，波动很大，
     卡 120s 会把本来能成功的批次判成超时。
     """
+    retries = _LLM_MAX_RETRIES if retries is None else retries
+    timeout = _LLM_TIMEOUT if timeout is None else timeout
     api_key, base_url, model = _ai_llm_config()
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")

@@ -29,6 +29,8 @@ import json, os, re, sys, time, threading, urllib.parse, urllib.request, urllib.
 
 _LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
 _LLM_SEMAPHORE = threading.BoundedSemaphore(_LLM_MAX_CONCURRENCY)
+_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "1")))
+_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "120")))
 import datetime as dt_module
 from datetime import datetime, timezone, timedelta, date
 from email.utils import parsedate_to_datetime
@@ -809,8 +811,10 @@ def _llm_config():
     return api_key, base_url, translate_model, analysis_model
 
 
-def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180):
+def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=None):
     """调用 OpenAI 兼容接口并解析 JSON 对象。失败抛异常，由调用方决定降级。"""
+    retries = _LLM_MAX_RETRIES if retries is None else retries
+    timeout = _LLM_TIMEOUT if timeout is None else timeout
     api_key, base_url, translate_model, _analysis_model = _llm_config()
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
@@ -852,12 +856,10 @@ def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180
     raise last_exc
 
 
-def call_llm_text(system_prompt, user_prompt, retries=1, model=None, timeout=180):
-    """调用 OpenAI 兼容接口并返回纯文本。
-
-    全文翻译要的是译文正文，不是 JSON：不能复用 call_llm_json
-    （它带 response_format=json_object，会强制模型输出 JSON）。
-    """
+def call_llm_text(system_prompt, user_prompt, retries=None, model=None, timeout=None):
+    """调用 OpenAI 兼容接口并返回纯文本。"""
+    retries = _LLM_MAX_RETRIES if retries is None else retries
+    timeout = _LLM_TIMEOUT if timeout is None else timeout
     api_key, base_url, translate_model, _analysis_model = _llm_config()
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
@@ -901,7 +903,7 @@ TRANSLATE_SYSTEM = (
 )
 
 
-def translate_batch_llm(pairs, batch_size=10):
+def translate_batch_llm(pairs, batch_size=20):
     """用 LLM 批量翻译英文条目：pairs 为 [(idx, title, summary)]。
 
     返回 {idx: (title_zh, summary_zh)}。批量翻译避免外部 API 的限流问题。
@@ -929,7 +931,7 @@ def translate_batch_llm(pairs, batch_size=10):
         )
 
         try:
-            data = call_llm_json(TRANSLATE_SYSTEM, user_prompt, retries=1)
+            data = call_llm_json(TRANSLATE_SYSTEM, user_prompt, retries=0)
             items_translated = data.get("items") or []
 
             for row in items_translated:
