@@ -1,0 +1,63 @@
+{
+  "timestamp": "2026-09-02T09:54:15.909585",
+  "tests": [
+    {
+      "name": "交易日历-官方数据",
+      "passed": true
+    },
+    {
+      "name": "交易日历-日期判断",
+      "passed": true
+    },
+    {
+      "name": "交易日历-缓存",
+      "passed": true
+    },
+    {
+      "name": "智能时间扩展",
+      "passed": true
+    },
+    {
+      "name": "监控-健康检查",
+      "passed": true
+    },
+    {
+      "name": "监控-指标导出",
+      "passed": true
+    },
+    {
+      "name": "日志系统",
+      "passed": true
+    },
+    {
+      "name": "配置管理-加载",
+      "passed": true
+    },
+    {
+      "name": "配置管理-文件",
+      "passed": true
+    },
+    {
+      "name": "AI日报",
+      "passed": true
+    },
+    {
+      "name": "财经日报",
+      "passed": true
+    },
+    {
+      "name": "运维文档",
+      "passed": true
+    },
+    {
+      "name": "性能-缓存",
+      "passed": true
+    }
+  ],
+  "summary": {
+    "total": 13,
+    "passed": 13,
+    "failed": 0,
+    "pass_rate": 100.0
+  }
+}

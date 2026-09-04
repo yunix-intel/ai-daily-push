@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-09-02T09:54:16.101227",
+  "metrics": {
+    "ai_daily": {
+      "last_run": null,
+      "success_count": 0,
+      "failure_count": 0,
+      "avg_duration": 0,
+      "last_error": null
+    },
+    "finance_daily": {
+      "last_run": null,
+      "success_count": 0,
+      "failure_count": 0,
+      "avg_duration": 0,
+      "last_error": null
+    },
+    "data_quality": {
+      "ai_items_count": 0,
+      "finance_items_count": 0,
+      "empty_runs": 0,
+      "last_check": null
+    },
+    "system": {
+      "uptime": 0,
+      "memory_usage": 0,
+      "cache_hit_rate": 0
+    }
+  }
+}

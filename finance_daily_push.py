@@ -1196,7 +1196,7 @@ def collect_blogger_views(bloggers_cfg, hours=24):
     """抓取并总结所有配置的博主。任一环节失败都不影响主流程。
 
     Returns:
-        list[dict]: [{name, url, articles, viewpoint, focus, tone}, ...]
+        list[dict]: [{name, url, platform, articles, viewpoint, focus, tone}, ...]
     """
     if not bloggers_cfg:
         return []
@@ -1212,9 +1212,22 @@ def collect_blogger_views(bloggers_cfg, hours=24):
 
     results = []
     for blogger in collected:
+        uid = blogger.get('uid', '')
+        # 从原始配置中获取类型，判断是微博还是博客
+        blogger_type = next((b.get('type', 'blog') for b in bloggers_cfg if b.get('uid') == uid), 'blog')
+
+        # 根据平台类型生成正确的 URL
+        if blogger_type == 'weibo':
+            url = f"https://weibo.com/u/{uid}"
+            platform = "weibo"
+        else:
+            url = f"https://blog.sina.com.cn/u/{uid}"
+            platform = "blog"
+
         entry = {
             "name": blogger.get("name", ""),
-            "url": f"https://blog.sina.com.cn/u/{blogger.get('uid', '')}",
+            "url": url,
+            "platform": platform,
             "articles": [
                 {"title": a.get("title", ""), "url": a.get("url", ""),
                  "published": a.get("published", ""),
@@ -1692,7 +1705,7 @@ def main():
 
     # Twitter 财经传言与媒体报道
     print("[1.5/5] 抓取 Twitter 财经传言与媒体报道...")
-    twitter_content = {"rumors": [], "media": []}
+    twitter_content = {"rumors": [], "media": [], "available": False, "errors": {}}
     try:
         from scrapers.twitter_scraper import fetch_twitter_categorized
 
@@ -1709,13 +1722,13 @@ def main():
                 print(f"     [WARN] LLM调用失败：{e}")
                 return ""
 
-        twitter_content = fetch_twitter_categorized(llm_caller, max_per_category=5)
+        twitter_content = fetch_twitter_categorized(llm_caller, max_per_category=5, hours=args.hours)
         print(f"     ✓ 小道消息 {len(twitter_content.get('rumors', []))} 条")
         print(f"     ✓ 正规媒体 {len(twitter_content.get('media', []))} 条")
 
     except Exception as exc:
         print(f"     [!] Twitter 抓取失败，继续执行：{exc!r}")
-        twitter_content = {"rumors": [], "media": []}
+        twitter_content = {"rumors": [], "media": [], "available": False, "errors": {"general": str(exc)}}
 
     print(f"[2/5] 抓取财经快讯（过去 {args.hours} 小时）...")
     items_grouped = fetch_finance_items(hours=args.hours)

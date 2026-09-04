@@ -15,15 +15,23 @@ import requests
 class WeiboScraper:
     """微博抓取器（通过 RSSHub）"""
 
-    def __init__(self, rsshub_base="https://rsshub.app", timeout=30):
+    # RSSHub 公共镜像列表（按优先级排序）
+    DEFAULT_MIRRORS = [
+        "https://rsshub.app",
+        "https://rsshub.rssforever.com",
+        "https://rsshub.ktachibana.party",
+    ]
+
+    def __init__(self, rsshub_base=None, timeout=30):
         """
         初始化微博抓取器
 
         Args:
-            rsshub_base: RSSHub 服务地址
+            rsshub_base: RSSHub 服务地址（可选，默认使用镜像列表）
             timeout: 请求超时时间（秒）
         """
-        self.rsshub_base = rsshub_base.rstrip("/")
+        # 如果指定了单一地址，只用它；否则从镜像列表依次尝试
+        self.rsshub_mirrors = [rsshub_base.rstrip("/")] if rsshub_base else self.DEFAULT_MIRRORS
         self.timeout = timeout
         self.user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -31,7 +39,7 @@ class WeiboScraper:
             "Chrome/120.0.0.0 Safari/537.36"
         )
 
-    def fetch_weibo_user(self, uid: str, limit: int = 10) -> List[Dict]:
+    def fetch_weibo_user(self, uid: str, limit: int = 10) -> Dict:
         """
         抓取指定用户的微博
 
@@ -40,54 +48,74 @@ class WeiboScraper:
             limit: 最多返回多少条
 
         Returns:
-            微博列表，每条包含 title, content, link, pub_date
+            dict: {
+                "weibos": 微博列表，每条包含 title, content, link, pub_date
+                "available": bool,
+                "error": str (失败时),
+                "source_url": str (使用的镜像地址)
+            }
         """
-        # RSSHub 微博用户路由：/weibo/user/{uid}
-        url = f"{self.rsshub_base}/weibo/user/{uid}"
+        last_error = None
 
-        try:
-            headers = {"User-Agent": self.user_agent}
-            response = requests.get(url, headers=headers, timeout=self.timeout)
-            response.raise_for_status()
+        for mirror in self.rsshub_mirrors:
+            url = f"{mirror}/weibo/user/{uid}"
 
-            # 解析 RSS XML
-            root = ET.fromstring(response.content)
+            try:
+                headers = {"User-Agent": self.user_agent}
+                response = requests.get(url, headers=headers, timeout=self.timeout)
+                response.raise_for_status()
 
-            weibos = []
-            for item in root.findall(".//item")[:limit]:
-                title = item.findtext("title", "").strip()
-                link = item.findtext("link", "").strip()
-                pub_date_str = item.findtext("pubDate", "")
-                description = item.findtext("description", "").strip()
+                # 解析 RSS XML
+                root = ET.fromstring(response.content)
 
-                # 清理 HTML 标签
-                import re
-                from html import unescape
-                clean_content = re.sub(r'<[^>]+>', '', description)
-                clean_content = unescape(clean_content).strip()
+                weibos = []
+                for item in root.findall(".//item")[:limit]:
+                    title = item.findtext("title", "").strip()
+                    link = item.findtext("link", "").strip()
+                    pub_date_str = item.findtext("pubDate", "")
+                    description = item.findtext("description", "").strip()
 
-                # 解析发布时间
-                pub_date = None
-                if pub_date_str:
-                    try:
-                        from dateutil.parser import parse
-                        pub_date = parse(pub_date_str)
-                    except Exception:
-                        pass
+                    # 清理 HTML 标签
+                    import re
+                    from html import unescape
+                    clean_content = re.sub(r'<[^>]+>', '', description)
+                    clean_content = unescape(clean_content).strip()
 
-                weibos.append({
-                    "title": title,
-                    "content": clean_content,
-                    "link": link,
-                    "pub_date": pub_date,
-                    "uid": uid
-                })
+                    # 解析发布时间
+                    pub_date = None
+                    if pub_date_str:
+                        try:
+                            from dateutil.parser import parse
+                            pub_date = parse(pub_date_str)
+                        except Exception:
+                            pass
 
-            return weibos
+                    weibos.append({
+                        "title": title,
+                        "content": clean_content,
+                        "link": link,
+                        "pub_date": pub_date,
+                        "uid": uid
+                    })
 
-        except Exception as e:
-            print(f"     [WARN] 抓取微博用户 {uid} 失败：{e}")
-            return []
+                return {
+                    "weibos": weibos,
+                    "available": True,
+                    "source_url": mirror
+                }
+
+            except Exception as e:
+                last_error = f"{mirror}: {e!r}"
+                continue
+
+        # 所有镜像都失败
+        print(f"     [WARN] 抓取微博用户 {uid} 失败，已尝试 {len(self.rsshub_mirrors)} 个镜像")
+        return {
+            "weibos": [],
+            "available": False,
+            "error": last_error or "所有 RSSHub 镜像均不可用",
+            "source_url": ""
+        }
 
     def fetch_recent(self, uid: str, name: str = "", hours: int = 24,
                     max_articles: int = 6) -> Dict:
@@ -101,19 +129,22 @@ class WeiboScraper:
             max_articles: 最多取几条
 
         Returns:
-            dict: {name, uid, articles: [...], available: bool}
+            dict: {name, uid, articles: [...], available: bool, error: str (失败时)}
         """
         label = name or uid
         result = {"name": name, "uid": str(uid), "articles": [], "available": False}
 
-        try:
-            weibos = self.fetch_weibo_user(uid, limit=20)
-        except Exception as exc:
-            print(f"     [!] {label} 微博抓取失败：{exc!r}")
+        fetch_result = self.fetch_weibo_user(uid, limit=20)
+
+        if not fetch_result["available"]:
+            result["error"] = fetch_result.get("error", "RSSHub 服务不可用")
+            print(f"     [!] {label} 微博抓取失败：{result['error']}")
             return result
 
+        weibos = fetch_result["weibos"]
         if not weibos:
-            print(f"     [!] {label} 微博解析不出内容，可能是RSSHub服务问题")
+            result["error"] = "解析不出内容"
+            print(f"     [!] {label} 微博解析不出内容")
             return result
 
         # 按时间过滤
@@ -137,7 +168,7 @@ class WeiboScraper:
                 "body": weibo["content"][:500]  # 限制长度
             })
 
-        print(f"     {label} 收录 {len(result['articles'])} 条微博")
+        print(f"     {label} 收录 {len(result['articles'])} 条微博（来源：{fetch_result['source_url']}）")
         return result
 
 

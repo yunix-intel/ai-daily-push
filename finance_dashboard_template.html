@@ -377,14 +377,25 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   const twitter = DATA.twitter || {};
   const rumors = twitter.rumors || [];
   const media = twitter.media || [];
+  const twitterAvailable = twitter.available !== false;
 
-  if(rumors.length || media.length) {
-    main+='<div class="market-divider" id="twitter-section"><h2>🐦 Twitter 财经观察<span class="badge">'+(rumors.length + media.length)+' 条</span></h2></div>';
+  if(rumors.length || media.length || !twitterAvailable) {
+    main+='<div class="market-divider" id="twitter-section"><h2>🐦 Twitter 财经观察';
+    if(rumors.length || media.length) main+='<span class="badge">'+(rumors.length + media.length)+' 条</span>';
+    main+='</h2></div>';
+
+    // 数据源不可用提示
+    if(!twitterAvailable && !rumors.length && !media.length) {
+      const errors = twitter.errors || {};
+      const errorMsg = errors.rumors || errors.media || errors.general || 'RSSHub 服务暂不可用';
+      main+='<div class="block"><div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">';
+      main+='🔺 Twitter 数据源：'+esc(errorMsg)+'</div></div>';
+    }
 
     // 小道消息板块
     if(rumors.length) {
       main+='<div class="block" style="border-left:3px solid var(--warn)"><h2>⚡ 市场传言</h2>';
-      main+='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">来自期权异动监测、做空机构爆料等渠道，未经官方确认</div>';
+      main+='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">⚠️ <strong>未经证实</strong>，来自期权异动监测、做空机构爆料等渠道，仅作线索参考</div>';
       rumors.forEach((r,idx)=>{
         main+='<div style="padding:12px 0;border-bottom:1px dashed var(--border)">';
         if(idx===rumors.length-1) main=main.slice(0,-55); // 移除最后一个的border
@@ -392,8 +403,10 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
         main+='<div style="font-size:13.5px;color:#c9d1dc;margin-bottom:8px;text-align:justify">'+esc(r.summary||'')+'</div>';
         if(r.impact) main+='<div style="font-size:12.5px;color:var(--accent);margin-bottom:6px">📊 '+esc(r.impact)+'</div>';
         main+='<div style="display:flex;justify-content:space-between;align-items:center">';
-        main+='<span style="font-size:12px;color:var(--muted)">'+esc(r.source||'')+'</span>';
-        if(r.link) main+='<a href="'+safeUrl(r.link)+'" target="_blank" style="font-size:12px;color:var(--accent);text-decoration:none">查看原文 →</a>';
+        main+='<span style="font-size:12px;color:var(--muted)">'+esc(r.source||'');
+        if(r.verification) main+=' · <span style="color:var(--warn)">'+esc(r.verification === 'unverified' ? '未经证实' : r.verification)+'</span>';
+        main+='</span>';
+        if(r.link && r.link !== '#') main+='<a href="'+safeUrl(r.link)+'" target="_blank" style="font-size:12px;color:var(--accent);text-decoration:none">查看原文 →</a>';
         main+='</div></div>';
       });
       main+='</div>';
@@ -411,7 +424,7 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
         if(m.impact) main+='<div style="font-size:12.5px;color:var(--accent2);margin-bottom:6px">📈 '+esc(m.impact)+'</div>';
         main+='<div style="display:flex;justify-content:space-between;align-items:center">';
         main+='<span style="font-size:12px;color:var(--muted)">'+esc(m.source||'')+'</span>';
-        if(m.link) main+='<a href="'+safeUrl(m.link)+'" target="_blank" style="font-size:12px;color:var(--accent2);text-decoration:none">查看原文 →</a>';
+        if(m.link && m.link !== '#') main+='<a href="'+safeUrl(m.link)+'" target="_blank" style="font-size:12px;color:var(--accent2);text-decoration:none">查看原文 →</a>';
         main+='</div></div>';
       });
       main+='</div>';

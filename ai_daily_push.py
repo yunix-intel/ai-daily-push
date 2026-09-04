@@ -1025,6 +1025,11 @@ def shape(report, market_insights=None, news_metrics=None):
             original_link = it.get("links", {}).get("original", "")
             is_translated = bool(original_title) and original_title != title
 
+            # 全文翻译结果由 translate_page_with_llm() 写入 translatedPage；
+            # 同时兼容 ArticleTranslator 写入的 translated_content，避免数据丢失。
+            translated_page = it.get("translatedPage", "")
+            translated_content = it.get("translated_content", "")
+
             # 判断是否需要翻译：有原文链接，且标题中包含英文或已被翻译
             needs_translation = bool(original_link) and (
                 is_translated or
@@ -1032,8 +1037,7 @@ def shape(report, market_insights=None, news_metrics=None):
             )
 
             # 生成翻译页面（走配置的 LLM 网关）
-            translated_page = ""
-            if needs_translation and original_link.startswith("http") and page_translate_budget > 0:
+            if not translated_page and needs_translation and original_link.startswith("http") and page_translate_budget > 0:
                 page_translate_budget -= 1
                 try:
                     translated_file = translate_page_with_llm(original_link, title)
@@ -1052,6 +1056,7 @@ def shape(report, market_insights=None, news_metrics=None):
                 "original": original_link,
                 "aihot": it.get("links", {}).get("aihot", ""),
                 "translatedPage": translated_page,
+                "translated_content": translated_content,
             }
             its.append(entry)
             flat_for_ranking.append((entry, label))
@@ -1625,10 +1630,28 @@ def main():
                 print(f"     [WARN] 趋势分析失败，跳过：{e}")
 
         except Exception as e:
-            print(f"     [WARN] 市场数据采集失败，跳过该板块：{e}")
-            market_insights = []
+            print(f"     [WARN] 市场数据采集失败：{e}")
+            # 添加降级显示卡片
+            market_insights.append({
+                "idx": 1,
+                "title": "市场数据暂不可用",
+                "summary": "OpenRouter 或 Artificial Analysis API 暂时无法访问。如需查看行业动态，请稍后刷新本页面或访问官方网站。",
+                "link": "#",
+                "source": "System",
+                "pubDate": datetime.now(timezone.utc).isoformat(),
+                "error": str(e)
+            })
     else:
         print("[1.5/4] 市场数据模块未安装，跳过")
+        # 模块缺失时也添加提示
+        market_insights.append({
+            "idx": 1,
+            "title": "市场数据模块未安装",
+            "summary": "当前环境未安装 analyzers 模块，无法采集 OpenRouter 和 Artificial Analysis 数据。",
+            "link": "#",
+            "source": "System",
+            "pubDate": datetime.now(timezone.utc).isoformat()
+        })
 
     # 从新闻中提取关键指标
     print("[1.6/4] 从新闻提取关键指标（ARR/Token/用户数等）...")
@@ -1683,6 +1706,15 @@ def main():
             all_news_items.extend(section.get('items', []))
 
         if all_news_items:
+            # 统一翻译器输入字段：AI HOT 使用 links.original，翻译器使用 link；
+            # 同时补齐筛选所需的区域和重要性，避免候选被静默判为不可翻译。
+            for item in all_news_items:
+                links = item.get("links") or {}
+                if not item.get("link"):
+                    item["link"] = links.get("original") or links.get("aihot") or ""
+                item.setdefault("region", "international")
+                item.setdefault("importance_score", 5)
+
             # 批量翻译文章（最多5篇）
             translated_count = batch_translate_articles(
                 all_news_items,
