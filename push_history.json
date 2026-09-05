@@ -100,5 +100,16 @@
     "actual_time": "00:53:48",
     "actual_time_bj": "2026-09-05 08:53:48 (北京时间)",
     "expected_time_bj": "2026-09-05 07:00:00 (北京时间)"
+  },
+  {
+    "task": "AI Daily Push",
+    "timestamp": "2026-09-05T01:56:24.426371+00:00",
+    "expected_time": "2026-09-04T23:00:00+00:00",
+    "delay_seconds": 10584.426371,
+    "delay_minutes": 176.4,
+    "date": "2026-09-05",
+    "actual_time": "01:56:24",
+    "actual_time_bj": "2026-09-05 09:56:24 (北京时间)",
+    "expected_time_bj": "2026-09-05 07:00:00 (北京时间)"
   }
 ]
