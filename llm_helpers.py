@@ -12,6 +12,8 @@ import urllib.request
 
 
 _LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
+_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "2")))
+_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "180")))
 _LLM_SEMAPHORE = threading.BoundedSemaphore(_LLM_MAX_CONCURRENCY)
 
 
@@ -62,7 +64,7 @@ def _llm_config():
     return api_key, base_url, translate_model, analysis_model
 
 
-def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180):
+def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=None):
     """
     调用 OpenAI 兼容接口并解析 JSON 对象
 
@@ -80,6 +82,9 @@ def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180
         RuntimeError: 配置错误或调用失败
     """
     api_key, base_url, translate_model, _analysis_model = _llm_config()
+
+    retries = _LLM_MAX_RETRIES if retries is None else retries
+    timeout = _LLM_TIMEOUT if timeout is None else timeout
 
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
@@ -132,7 +137,7 @@ def call_llm_json(system_prompt, user_prompt, retries=2, model=None, timeout=180
     raise last_exc
 
 
-def call_llm(system_prompt, user_prompt, retries=2, model=None, timeout=180):
+def call_llm(system_prompt, user_prompt, retries=None, model=None, timeout=None):
     """
     调用 OpenAI 兼容接口并返回纯文本
 
@@ -150,6 +155,9 @@ def call_llm(system_prompt, user_prompt, retries=2, model=None, timeout=180):
         RuntimeError: 配置错误或调用失败
     """
     api_key, base_url, translate_model, _analysis_model = _llm_config()
+
+    retries = _LLM_MAX_RETRIES if retries is None else retries
+    timeout = _LLM_TIMEOUT if timeout is None else timeout
 
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")

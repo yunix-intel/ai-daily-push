@@ -334,23 +334,32 @@ def identify_breaking_news(items: List[Dict], llm_call_func, time_threshold_hour
     if not candidates:
         return []
 
-    # 第二步：LLM 判断重要性和影响（分批，避免一次性请求过大超时）
-    breaking_events = []
-    for _, chunk in _chunked(candidates, CLASSIFY_BATCH_SIZE):
-        try:
-            breaking_events.extend(_analyze_breaking_chunk(chunk, llm_call_func))
-        except Exception as exc:
-            print(f"     [!] 突发事件识别单批失败（{len(chunk)} 条）：{exc}")
-            # 回退：该批取前 2 条当待确认事件
-            breaking_events.extend({
-                'title': item.get('title', ''),
-                'desc': item.get('summary', '')[:100],
-                'impact': '需进一步关注',
-                'direction': '待确认',
-                'level': '一般',
-                'sectors': [],
-                'original_item': item
-            } for item in chunk[:2])
+    def heuristic_events(chunk):
+        return [{
+            'title': item.get('title', ''),
+            'desc': item.get('summary', '')[:100],
+            'impact': '需进一步关注',
+            'direction': '待确认',
+            'level': '一般',
+            'sectors': [],
+            'original_item': item
+        } for item in chunk[:2]]
+
+    # 财经日报可显式关闭可选 LLM 识别；此时直接走启发式路径。
+    if llm_call_func is None:
+        breaking_events = []
+        for _, chunk in _chunked(candidates, CLASSIFY_BATCH_SIZE):
+            breaking_events.extend(heuristic_events(chunk))
+    else:
+        # 第二步：LLM 判断重要性和影响（分批，避免一次性请求过大超时）
+        breaking_events = []
+        for _, chunk in _chunked(candidates, CLASSIFY_BATCH_SIZE):
+            try:
+                breaking_events.extend(_analyze_breaking_chunk(chunk, llm_call_func))
+            except Exception as exc:
+                print(f"     [!] 突发事件识别单批失败（{len(chunk)} 条）：{exc}")
+                # 回退：该批取前 2 条当待确认事件
+                breaking_events.extend(heuristic_events(chunk))
 
     # 第三步：地域验证（二次检查，防止分类错误）
     for event in breaking_events:
