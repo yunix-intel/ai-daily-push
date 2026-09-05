@@ -2,8 +2,8 @@ name: 每日推送：AI 日报 + 财经日报（企业微信 + GitHub Pages）
 
 on:
   schedule:
-    # UTC 21:30 = 北京时间 05:30；避开整点并给约 20 分钟构建预留缓冲
-    - cron: '30 21 * * *'
+    # UTC 23:00 = 北京时间 07:00（次日）；GitHub cron 为尽力调度，不保证准点启动
+    - cron: '0 23 * * *'
   workflow_dispatch:
 
 permissions:
@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CRON_HOUR: "21"
-  CRON_MINUTE: "30"
+  CRON_HOUR: "23"
+  CRON_MINUTE: "0"
   LLM_MAX_CONCURRENCY: "1"
   LLM_MAX_RETRIES: "0"
   LLM_TIMEOUT: "90"
@@ -138,7 +138,7 @@ jobs:
           if [ "${{ needs['finance-daily'].result }}" != "success" ]; then echo "::warning::财经日报 job 未成功"; fi
       - name: 记录推送时间
         if: always()
-        run: python push_history_recorder.py --expected-time "21:30" --task "AI Daily Push"
+        run: python push_history_recorder.py --expected-time "23:00" --task "AI Daily Push"
       - name: 提交推送历史
         continue-on-error: true
         run: |
