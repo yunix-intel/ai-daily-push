@@ -14,6 +14,7 @@
 """
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import requests
@@ -282,29 +283,27 @@ class BloggerScraper(BaseScraper):
         Returns:
             list[dict]: 只包含 available 且有文章的博主
         """
-        collected = []
-        for blogger in bloggers:
+        def fetch_one(blogger):
             uid = blogger.get("uid")
             if not uid:
-                continue
-
+                return None
             blogger_type = blogger.get("type", "blog")
-
-            if blogger_type == "weibo":
-                # 微博抓取（通过 RSSHub）
-                try:
+            try:
+                if blogger_type == "weibo":
                     from .weibo_scraper import fetch_weibo_blogger
                     data = fetch_weibo_blogger(uid, name=blogger.get("name", ""), hours=hours)
-                    if data["articles"]:
-                        collected.append(data)
-                except Exception as exc:
-                    print(f"     [!] 微博抓取失败 {blogger.get('name', uid)}：{exc!r}")
-            else:
-                # 新浪博客抓取（默认）
-                data = self.fetch_recent(uid, name=blogger.get("name", ""),
-                                         hours=hours, max_articles=max_articles)
-                if data["articles"]:
-                    collected.append(data)
+                else:
+                    data = self.fetch_recent(uid, name=blogger.get("name", ""),
+                                             hours=hours, max_articles=max_articles)
+                return data if data.get("articles") else None
+            except Exception as exc:
+                print(f"     [!] 博主抓取失败 {blogger.get('name', uid)}：{exc!r}")
+                return None
+
+        if not bloggers:
+            return []
+        with ThreadPoolExecutor(max_workers=min(2, len(bloggers))) as executor:
+            collected = [data for data in executor.map(fetch_one, bloggers) if data]
         return collected
 
 

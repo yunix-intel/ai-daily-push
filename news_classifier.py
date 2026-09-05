@@ -318,6 +318,9 @@ def identify_breaking_news(items: List[Dict], llm_call_func, time_threshold_hour
     Returns:
         突发事件列表，每个包含 title, desc, impact, direction, sectors, _region_hint
     """
+    if not items:
+        return []
+
     # 第一步：关键词筛选候选
     urgent_keywords = [
         '突发', '紧急', '重磅', '爆发', '暴跌', '暴涨',

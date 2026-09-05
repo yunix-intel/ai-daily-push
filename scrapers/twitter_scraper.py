@@ -10,6 +10,7 @@ import time
 from typing import List, Dict, Optional
 import xml.etree.ElementTree as ET
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 
@@ -167,22 +168,23 @@ class TwitterScraper:
         from datetime import datetime, timedelta
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        for username in accounts:
-            fetch_result = self.fetch_tweets(username, limit=limit_per_account)
+        def fetch_one(username):
+            return username, self.fetch_tweets(username, limit=limit_per_account)
 
+        with ThreadPoolExecutor(max_workers=min(3, max(1, len(accounts)))) as executor:
+            fetched = list(executor.map(fetch_one, accounts))
+
+        for username, fetch_result in fetched:
             if fetch_result["available"]:
-                # 只保留时间窗口内的推文
                 fresh_tweets = [
                     t for t in fetch_result["tweets"]
                     if t.get("pub_date") and t["pub_date"] >= cutoff
                 ]
                 all_tweets.extend(fresh_tweets)
-                if fetch_result["source_url"]:
+                if fetch_result.get("source_url"):
                     successful_mirrors.add(fetch_result["source_url"])
             else:
                 failed_accounts.append(username)
-
-            time.sleep(1)  # 避免请求过快
 
         if not all_tweets:
             error_msg = "所有账号均抓取失败" if len(failed_accounts) == len(accounts) else f"{hours}小时内无新推文"
@@ -201,7 +203,8 @@ class TwitterScraper:
         }
 
     def filter_and_summarize(self, tweets: List[Dict], llm_caller,
-                            max_rumors: int = 5, category: str = "rumors") -> List[Dict]:
+                            max_rumors: int = 5, category: str = "rumors",
+                            analysis_model: Optional[str] = None) -> List[Dict]:
         """
         使用 LLM 过滤噪音并提取核心观点
 
@@ -271,7 +274,7 @@ class TwitterScraper:
 """
 
         try:
-            result = llm_caller(system_prompt, user_prompt, model=None)
+            result = llm_caller(system_prompt, user_prompt, model=analysis_model)
 
             # 解析 JSON
             if isinstance(result, str):
@@ -326,13 +329,15 @@ def fetch_twitter_rumors(llm_caller, accounts: Optional[List[str]] = None,
 
     # 过滤并提取传言
     print(f"     使用 LLM 过滤噪音...")
-    rumors = scraper.filter_and_summarize(tweets, llm_caller, max_rumors=max_rumors)
+    rumors = scraper.filter_and_summarize(tweets, llm_caller, max_rumors=max_rumors,
+                                          analysis_model=None)
     print(f"     提取到 {len(rumors)} 条有价值传言")
 
     return rumors
 
 
-def fetch_twitter_categorized(llm_caller, max_per_category: int = 5, hours: int = 24) -> Dict[str, List[Dict]]:
+def fetch_twitter_categorized(llm_caller, max_per_category: int = 5, hours: int = 24,
+                              analysis_model: Optional[str] = None) -> Dict[str, List[Dict]]:
     """
     分类抓取 Twitter 内容：小道消息 + 正规媒体
 
@@ -357,59 +362,46 @@ def fetch_twitter_categorized(llm_caller, max_per_category: int = 5, hours: int 
         "errors": {}
     }
 
-    # 1. 抓取小道消息
+    def summarize_one(args):
+        category, fetch_result = args
+        if not fetch_result["available"]:
+            return category, [], fetch_result.get("error", "抓取失败")
+        print(f"     使用 LLM 过滤 {category} 噪音...")
+        return category, scraper.filter_and_summarize(
+            fetch_result["tweets"], llm_caller,
+            max_rumors=max_per_category, category=category,
+            analysis_model=analysis_model
+        ), ""
+
     print("\n[Twitter 小道消息]")
     print(f"     抓取 {len(scraper.RUMOR_ACCOUNTS)} 个爆料型账号...")
-    rumor_result = scraper.fetch_multiple_accounts(
-        accounts=scraper.RUMOR_ACCOUNTS,
-        limit_per_account=5,
-        hours=hours
-    )
-
-    if rumor_result["available"]:
-        print(f"     获取到 {len(rumor_result['tweets'])} 条推文（{hours}小时内）")
-        if rumor_result.get("failed_accounts"):
-            print(f"     [!] {len(rumor_result['failed_accounts'])} 个账号抓取失败")
-
-        print(f"     使用 LLM 过滤噪音...")
-        result["rumors"] = scraper.filter_and_summarize(
-            rumor_result["tweets"], llm_caller,
-            max_rumors=max_per_category, category="rumors"
-        )
-        print(f"     提取到 {len(result['rumors'])} 条小道消息")
-        result["available"] = True
-    else:
-        result["errors"]["rumors"] = rumor_result.get("error", "抓取失败")
-        print(f"     [!] 小道消息抓取失败：{result['errors']['rumors']}")
-
-    # 2. 抓取正规媒体
     print("\n[Twitter 正规媒体]")
     print(f"     抓取 {len(scraper.MEDIA_ACCOUNTS)} 个媒体账号...")
-    media_result = scraper.fetch_multiple_accounts(
-        accounts=scraper.MEDIA_ACCOUNTS,
-        limit_per_account=5,
-        hours=hours
-    )
-
-    if media_result["available"]:
-        print(f"     获取到 {len(media_result['tweets'])} 条推文（{hours}小时内）")
-        if media_result.get("failed_accounts"):
-            print(f"     [!] {len(media_result['failed_accounts'])} 个账号抓取失败")
-
-        print(f"     使用 LLM 过滤噪音...")
-        result["media"] = scraper.filter_and_summarize(
-            media_result["tweets"], llm_caller,
-            max_rumors=max_per_category, category="media"
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="twitter-category") as executor:
+        rumor_future = executor.submit(
+            scraper.fetch_multiple_accounts, scraper.RUMOR_ACCOUNTS, 5, hours
         )
-        print(f"     提取到 {len(result['media'])} 条正规媒体报道")
-        result["available"] = True
-    else:
-        result["errors"]["media"] = media_result.get("error", "抓取失败")
-        print(f"     [!] 正规媒体抓取失败：{result['errors']['media']}")
+        media_future = executor.submit(
+            scraper.fetch_multiple_accounts, scraper.MEDIA_ACCOUNTS, 5, hours
+        )
+        rumor_result = rumor_future.result()
+        media_result = media_future.result()
 
-    # 如果两个都失败才标记为整体不可用
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="twitter-category") as executor:
+        summary_results = list(executor.map(
+            summarize_one,
+            (("rumors", rumor_result), ("media", media_result))
+        ))
+
+    for category, entries, error in summary_results:
+        if error:
+            result["errors"][category] = error
+            print(f"     [!] {category} 抓取失败：{error}")
+            continue
+        result[category] = entries
+        print(f"     提取到 {len(entries)} 条内容")
+        result["available"] = True
+
     if not result["rumors"] and not result["media"]:
         result["available"] = False
-
     return result
-

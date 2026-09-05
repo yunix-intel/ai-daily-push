@@ -18,11 +18,13 @@ concurrency:
 env:
   CRON_HOUR: "23"
   CRON_MINUTE: "0"
-  LLM_MAX_CONCURRENCY: "1"
+  DEEPSEEK_MAX_CONCURRENCY: "2"
+  ANALYSIS_MAX_CONCURRENCY: "8"
   LLM_MAX_RETRIES: "0"
   LLM_TIMEOUT: "90"
   RSSHUB_TIMEOUT: "5"
   RSSHUB_MAX_MIRRORS: "2"
+  PYTHONUNBUFFERED: "1"
 
 jobs:
   ai-daily:
@@ -56,15 +58,15 @@ jobs:
           WECOM_AGENTID: ${{ secrets.WECOM_AGENTID }}
           WECOM_TOUSER: ${{ secrets.WECOM_TOUSER }}
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
-          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          WECOM_WEBHOOK: ${{ secrets.AI_WECOM_WEBHOOK || secrets.WECOM_WEBHOOK }}
+          FEISHU_WEBHOOK: ${{ secrets.AI_FEISHU_WEBHOOK || secrets.FEISHU_WEBHOOK }}
           WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
           WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
-        run: python ai_daily_push.py
+        run: python -u ai_daily_push.py
       - name: 上传 AI 页面和状态
         if: always()
         uses: actions/upload-artifact@v7
@@ -95,14 +97,16 @@ jobs:
           restore-keys: translations-
       - name: 财经日报
         env:
-          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          WECOM_WEBHOOK: ${{ secrets.FINANCE_WECOM_WEBHOOK || secrets.WECOM_WEBHOOK }}
+          FEISHU_WEBHOOK: ${{ secrets.FINANCE_FEISHU_WEBHOOK || secrets.FEISHU_WEBHOOK }}
           FINANCE_DASHBOARD_URL: ${{ secrets.FINANCE_DASHBOARD_URL }}
+          WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
+          WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
-        run: python finance_daily_push.py
+        run: python -u finance_daily_push.py
       - name: 上传财经页面和状态
         if: always()
         uses: actions/upload-artifact@v7
@@ -160,6 +164,14 @@ jobs:
             sleep 5
           done
           echo "::warning::推送历史提交失败；不影响本次页面发布"
+      - name: 生成监控页面
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -u github_monitor.py \
+            --repo "${{ github.repository }}" \
+            --workflow "每日推送：AI 日报 + 财经日报（企业微信 + GitHub Pages）" \
+            --report monitor.html
       - name: 准备 Pages 静态产物
         run: |
           mkdir -p public
@@ -174,6 +186,7 @@ jobs:
             echo "::warning::财经页面缺失"
           fi
           if [ -f push_history_report.html ]; then cp push_history_report.html public/push_history.html; fi
+          if [ -f monitor.html ]; then cp monitor.html public/monitor.html; fi
           test -f public/index.html || { echo "::error::没有可发布的 AI 页面"; exit 1; }
       - name: 上传 Pages 产物
         uses: actions/upload-pages-artifact@v4

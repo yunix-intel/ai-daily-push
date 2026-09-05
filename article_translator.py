@@ -281,7 +281,8 @@ class ArticleTranslator:
             # 单段最多再试一次。实测失败多是 SSL EOF / 504 这类瞬时错误，
             # 隔几秒重来通常就成了；不重试的话整篇里会夹着一大段英文。
             translated = None
-            for attempt in range(2):
+            max_attempts = max(1, int(os.getenv("LLM_ARTICLE_ATTEMPTS", "1")))
+            for attempt in range(max_attempts):
                 try:
                     translated = self.llm_caller(system_prompt, user_prompt)
                     if translated:

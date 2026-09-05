@@ -10,7 +10,7 @@
 4. 失败重试
 """
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from typing import List, Dict, Callable, Any, Optional
 import urllib.request
 import urllib.error
@@ -19,12 +19,15 @@ import urllib.error
 class ConcurrentFetcher:
     """并发抓取器"""
 
-    def __init__(self, max_workers: int = 10, timeout: int = 30, max_retries: int = 3):
-        self.max_workers = max_workers
-        self.timeout = timeout
-        self.max_retries = max_retries
+    def __init__(self, max_workers: int = 10, timeout: int = 30, max_retries: int = 3,
+                 deadline: Optional[float] = None):
+        self.max_workers = max(1, max_workers)
+        self.timeout = max(1, timeout)
+        self.max_retries = max(0, max_retries)
+        self.deadline = deadline
 
-    def fetch_rss_concurrent(self, feeds: List[tuple], fetch_func: Callable) -> List[Dict]:
+    def fetch_rss_concurrent(self, feeds: List[tuple], fetch_func: Callable,
+                             deadline: Optional[float] = None) -> List[Dict]:
         """
         并发抓取多个 RSS 源
 
@@ -36,24 +39,35 @@ class ConcurrentFetcher:
             所有抓取结果的合并列表
         """
         results = []
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # 提交所有任务
-            future_to_feed = {
-                executor.submit(self._fetch_with_retry, fetch_func, name, url): (name, url)
+        deadline_at = time.monotonic() + deadline if deadline else (
+            time.monotonic() + self.deadline if self.deadline else None
+        )
+        executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        futures = []
+        try:
+            futures = [
+                executor.submit(self._fetch_with_retry, fetch_func, name, url)
                 for name, url in feeds
-            }
-
-            # 收集结果
-            for future in as_completed(future_to_feed):
-                name, url = future_to_feed[future]
+            ]
+            for index, future in enumerate(futures):
+                name, url = feeds[index]
                 try:
-                    items = future.result(timeout=self.timeout)
+                    remaining = max(0.001, deadline_at - time.monotonic()) if deadline_at else self.timeout
+                    items = future.result(timeout=remaining)
                     if items:
                         results.extend(items)
                         print(f"     ✓ {name}: {len(items)} 条")
+                except TimeoutError:
+                    if deadline_at:
+                        print(f"     [TIMEOUT] {name}: fetch deadline reached")
+                        break
+                    print(f"     ✗ {name}: 请求超时")
                 except Exception as e:
                     print(f"     ✗ {name}: {e}")
+        finally:
+            for pending in futures:
+                pending.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
 
         return results
 
@@ -94,7 +108,8 @@ class ConcurrentFetcher:
         # 所有重试都失败
         raise last_error or Exception(f"Failed to fetch {name}")
 
-    def fetch_urls_concurrent(self, urls: List[str], fetch_func: Callable) -> Dict[str, Any]:
+    def fetch_urls_concurrent(self, urls: List[str], fetch_func: Callable,
+                              deadline: Optional[float] = None) -> Dict[str, Any]:
         """
         并发抓取多个 URL
 
@@ -105,22 +120,32 @@ class ConcurrentFetcher:
         Returns:
             {url: result} 字典
         """
+        deadline_at = time.monotonic() + deadline if deadline else (
+            time.monotonic() + self.deadline if self.deadline else None
+        )
+        executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        futures = {url: executor.submit(self._fetch_with_retry_generic, fetch_func, url)
+                   for url in urls}
         results = {}
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_url = {
-                executor.submit(self._fetch_with_retry_generic, fetch_func, url): url
-                for url in urls
-            }
-
-            for future in as_completed(future_to_url):
-                url = future_to_url[future]
+        try:
+            for url in urls:
+                future = futures[url]
                 try:
-                    result = future.result(timeout=self.timeout)
-                    results[url] = result
-                except Exception as e:
-                    results[url] = {"error": str(e)}
+                    remaining = max(0.001, deadline_at - time.monotonic()) if deadline_at else self.timeout
+                    results[url] = future.result(timeout=remaining)
+                except TimeoutError:
+                    results[url] = {"error": "达到抓取阶段总预算" if deadline_at else "请求超时"}
+                    if deadline_at and time.monotonic() >= deadline_at:
+                        break
+                except Exception as exc:
+                    results[url] = {"error": str(exc)}
+        finally:
+            for future in futures.values():
+                future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
 
+        for url in urls:
+            results.setdefault(url, {"error": "达到抓取阶段总预算"})
         return results
 
     def _fetch_with_retry_generic(self, fetch_func: Callable, url: str) -> Any:

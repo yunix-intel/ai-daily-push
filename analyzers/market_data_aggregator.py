@@ -4,6 +4,7 @@
 市场数据聚合器 - 整合多个数据源
 """
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from scrapers import fetch_openrouter_data, fetch_aa_data
 from .news_metrics_extractor import NewsMetricsExtractor
 
@@ -26,21 +27,24 @@ class MarketDataAggregator:
         """
         print("\n=== 市场数据聚合 ===")
 
-        # 1. 获取 OpenRouter 数据
-        print("1. 获取 OpenRouter 数据...")
-        try:
-            openrouter_data = fetch_openrouter_data()
-        except Exception as e:
-            self._log_error("OpenRouter 数据获取", e)
-            openrouter_data = {"total_models": 0, "rankings": [], "pricing": []}
+        def fetch_source(fetcher, empty):
+            try:
+                return fetcher()
+            except Exception as e:
+                self._log_error("市场数据获取", e)
+                return empty
 
-        # 2. 获取 Artificial Analysis 数据
-        print("2. 获取 Artificial Analysis 数据...")
-        try:
-            aa_data = fetch_aa_data()
-        except Exception as e:
-            self._log_error("Artificial Analysis 数据获取", e)
-            aa_data = {"intelligence": [], "speed": [], "cost": []}
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-source") as executor:
+            openrouter_future = executor.submit(
+                fetch_source, fetch_openrouter_data,
+                {"total_models": 0, "rankings": [], "pricing": []}
+            )
+            aa_future = executor.submit(
+                fetch_source, fetch_aa_data,
+                {"intelligence": [], "speed": [], "cost": []}
+            )
+            openrouter_data = openrouter_future.result()
+            aa_data = aa_future.result()
 
         # 3. 提取新闻指标（如果提供了新闻）
         news_metrics = {}

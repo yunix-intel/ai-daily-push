@@ -25,10 +25,13 @@ LLM 配置（支持自建 OpenAI 兼容网关）：
   python finance_daily_push.py --no-push  # 只生成网页，不推送（调试）
 """
 import json, os, re, sys, time, threading, urllib.parse, urllib.request, urllib.error
+from concurrent.futures import ThreadPoolExecutor
 
 
-_LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
-_LLM_SEMAPHORE = threading.BoundedSemaphore(_LLM_MAX_CONCURRENCY)
+_DEEPSEEK_MAX_CONCURRENCY = max(1, int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "2")))
+_ANALYSIS_MAX_CONCURRENCY = max(1, int(os.getenv("ANALYSIS_MAX_CONCURRENCY", "8")))
+_DEEPSEEK_SEMAPHORE = threading.BoundedSemaphore(_DEEPSEEK_MAX_CONCURRENCY)
+_ANALYSIS_SEMAPHORE = threading.BoundedSemaphore(_ANALYSIS_MAX_CONCURRENCY)
 _LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "1")))
 _LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "120")))
 import datetime as dt_module
@@ -501,12 +504,21 @@ def fetch_finance_items(hours=24, per_feed=20):
     collected_zh, collected_en = [], []
     seen, dropped_old = set(), 0
 
-    for source_name, url in FINANCE_FEEDS_ZH + FINANCE_FEEDS_EN:
-        is_en = (source_name, url) in FINANCE_FEEDS_EN
+    def fetch_one(feed):
+        source_name, url = feed
+        is_en = feed in FINANCE_FEEDS_EN
         try:
-            items = _fetch_rss_with_mirrors(source_name, url, limit=per_feed)
+            return source_name, is_en, _fetch_rss_with_mirrors(source_name, url, limit=per_feed), None
         except Exception as exc:
-            print(f"     来源跳过：{source_name}（{exc}）")
+            return source_name, is_en, [], exc
+
+    feeds = FINANCE_FEEDS_ZH + FINANCE_FEEDS_EN
+    with ThreadPoolExecutor(max_workers=min(4, len(feeds)), thread_name_prefix="finance-rss") as executor:
+        fetched = list(executor.map(fetch_one, feeds))
+
+    for source_name, is_en, items, error in fetched:
+        if error is not None:
+            print(f"     来源跳过：{source_name}（{error}）")
             continue
         kept = 0
         for item in items:
@@ -527,10 +539,7 @@ def fetch_finance_items(hours=24, per_feed=20):
                 "isEnglish": is_en,
                 "published": published.isoformat() if published else "",
             }
-            if is_en:
-                collected_en.append(entry)
-            else:
-                collected_zh.append(entry)
+            (collected_en if is_en else collected_zh).append(entry)
             kept += 1
         print(f"     {source_name}：抓取 {len(items)} 条，入库 {kept} 条")
 
@@ -700,12 +709,8 @@ def pre_translate_articles(items_international):
 
     # 创建 LLM 调用包装器
     def llm_caller(system_prompt, user_prompt, model=None):
-        """LLM 调用包装器，返回纯文本"""
-        try:
-            return call_llm_text(system_prompt, user_prompt, model=model)
-        except Exception as e:
-            print(f"     [WARN] LLM 调用失败: {e}")
-            return None
+        """LLM 调用包装器，默认使用分析模型。"""
+        return call_llm_text(system_prompt, user_prompt, model=model or _llm_config()[3])
 
     # 批量翻译文章
     try:
@@ -815,11 +820,13 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
     """调用 OpenAI 兼容接口并解析 JSON 对象。失败抛异常，由调用方决定降级。"""
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
-    api_key, base_url, translate_model, _analysis_model = _llm_config()
+    api_key, base_url, translate_model, analysis_model = _llm_config()
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
+    resolved_model = model or translate_model
+    semaphore = _ANALYSIS_SEMAPHORE if resolved_model == analysis_model else _DEEPSEEK_SEMAPHORE
     payload = {
-        "model": model or translate_model,
+        "model": resolved_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -839,7 +846,7 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
                     "Authorization": f"Bearer {api_key}",
                 },
             )
-            with _LLM_SEMAPHORE:
+            with semaphore:
                 with urllib.request.urlopen(req, timeout=timeout) as response:
                     body = json.loads(response.read().decode("utf-8"))
             content = body["choices"][0]["message"]["content"]
@@ -860,11 +867,13 @@ def call_llm_text(system_prompt, user_prompt, retries=None, model=None, timeout=
     """调用 OpenAI 兼容接口并返回纯文本。"""
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
-    api_key, base_url, translate_model, _analysis_model = _llm_config()
+    api_key, base_url, translate_model, analysis_model = _llm_config()
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
+    resolved_model = model or translate_model
+    semaphore = _ANALYSIS_SEMAPHORE if resolved_model == analysis_model else _DEEPSEEK_SEMAPHORE
     payload = {
-        "model": model or translate_model,
+        "model": resolved_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -883,7 +892,7 @@ def call_llm_text(system_prompt, user_prompt, retries=None, model=None, timeout=
                     "Authorization": f"Bearer {api_key}",
                 },
             )
-            with _LLM_SEMAPHORE:
+            with semaphore:
                 with urllib.request.urlopen(req, timeout=timeout) as response:
                     body = json.loads(response.read().decode("utf-8"))
             return body["choices"][0]["message"]["content"].strip()
@@ -1218,49 +1227,44 @@ def collect_blogger_views(bloggers_cfg, hours=24):
     scraper = BloggerScraper()
     collected = scraper.fetch_all(bloggers_cfg, hours=hours)
 
-    results = []
-    for blogger in collected:
-        uid = blogger.get('uid', '')
-        # 从原始配置中获取类型，判断是微博还是博客
-        blogger_type = next((b.get('type', 'blog') for b in bloggers_cfg if b.get('uid') == uid), 'blog')
+    if not collected:
+        return []
 
-        # 根据平台类型生成正确的 URL
+    results = []
+
+    def shape_and_digest(blogger):
+        uid = blogger.get('uid', '')
+        blogger_type = next((b.get('type', 'blog') for b in bloggers_cfg if b.get('uid') == uid), 'blog')
         if blogger_type == 'weibo':
             url = f"https://weibo.com/u/{uid}"
             platform = "weibo"
         else:
             url = f"https://blog.sina.com.cn/u/{uid}"
             platform = "blog"
-
         entry = {
-            "name": blogger.get("name", ""),
-            "url": url,
-            "platform": platform,
+            "name": blogger.get("name", ""), "url": url, "platform": platform,
             "articles": [
                 {"title": a.get("title", ""), "url": a.get("url", ""),
-                 "published": a.get("published", ""),
-                 # 直播贴要在页面上标出来：它的发布时间是前一交易日，
-                 # 不标的话读者会以为这是条过期内容。
-                 "isLive": bool(a.get("isLive"))}
+                 "published": a.get("published", ""), "isLive": bool(a.get("isLive"))}
                 for a in blogger.get("articles", [])
             ],
         }
         try:
             digest = generate_blogger_digest(blogger) or {}
             entry["viewpoint"] = (digest.get("viewpoint") or "").strip()
-            entry["focus"] = [str(f).strip() for f in (digest.get("focus") or [])
-                              if str(f).strip()][:5]
+            entry["focus"] = [str(f).strip() for f in (digest.get("focus") or []) if str(f).strip()][:5]
             entry["tone"] = (digest.get("tone") or "").strip()
         except Exception as exc:
-            # 摘要失败仍保留文章标题和链接：读者至少还能点进去自己看，
-            # 比整块消失强。
             print(f"     [!] {entry['name']} 观点摘要失败，仅保留标题：{exc!r}")
-            entry["viewpoint"] = ""
-            entry["focus"] = []
-            entry["tone"] = ""
-        results.append(entry)
+            entry["viewpoint"], entry["focus"], entry["tone"] = "", [], ""
+        return entry
+
+    # 博主之间相互独立；模型调用由分析 semaphore 控制。
+    with ThreadPoolExecutor(max_workers=min(4, len(collected))) as executor:
+        results = list(executor.map(shape_and_digest, collected))
 
     return results
+
 
 
 def translate_page_url(original_url):
@@ -1655,16 +1659,17 @@ def main():
                 print(f"     [WARN] {label}获取失败，跳过该板块：{exc!r}")
                 return fallback
 
-        north_flow = _safe_fetch(
-            "盘后北向资金", scraper.fetch_north_flow,
-            {"available": False, "source": "none", "collection_mode": "post_close",
-             "error": "数据抓取失败", "reason": "盘后东方财富和同花顺均未返回有效数据"})
-        sector_flow = _safe_fetch(
-            "行业资金流向", lambda: scraper.fetch_sector_flow(top_n=5),
-            {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
-        stock_flow = _safe_fetch(
-            "个股资金流向", lambda: scraper.fetch_stock_flow(top_n=10),
-            {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="money-flow") as executor:
+            north_future = executor.submit(scraper.fetch_north_flow)
+            sector_future = executor.submit(lambda: scraper.fetch_sector_flow(top_n=5))
+            stock_future = executor.submit(lambda: scraper.fetch_stock_flow(top_n=10))
+            north_flow = _safe_fetch("盘后北向资金", north_future.result,
+                                     {"available": False, "source": "none", "collection_mode": "post_close",
+                                      "error": "数据抓取失败", "reason": "盘后东方财富和同花顺均未返回有效数据"})
+            sector_flow = _safe_fetch("行业资金流向", sector_future.result,
+                                      {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
+            stock_flow = _safe_fetch("个股资金流向", stock_future.result,
+                                     {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
 
         money_flow_data = {
             "north_flow": north_flow,
@@ -1727,12 +1732,16 @@ def main():
     try:
         from scrapers.twitter_scraper import fetch_twitter_categorized
 
-        # 创建 LLM 调用包装器
         def llm_caller(system_prompt, user_prompt, model=None):
-            """LLM 调用包装器，返回纯文本"""
+            """LLM 调用包装器，默认使用分析模型。"""
             try:
-                result = call_llm_json(system_prompt, user_prompt, model=model)
-                # 如果返回的是dict，转为JSON字符串
+                result = call_llm_json(
+                    system_prompt,
+                    user_prompt,
+                    model=model or _llm_config()[3],
+                    retries=0,
+                    timeout=_LLM_TIMEOUT,
+                )
                 if isinstance(result, dict):
                     return json.dumps(result, ensure_ascii=False)
                 return str(result)
@@ -1740,7 +1749,10 @@ def main():
                 print(f"     [WARN] LLM调用失败：{e}")
                 return ""
 
-        twitter_content = fetch_twitter_categorized(llm_caller, max_per_category=5, hours=args.hours)
+        twitter_content = fetch_twitter_categorized(
+            llm_caller, max_per_category=5, hours=args.hours,
+            analysis_model=_llm_config()[3]
+        )
         print(f"     ✓ 小道消息 {len(twitter_content.get('rumors', []))} 条")
         print(f"     ✓ 正规媒体 {len(twitter_content.get('media', []))} 条")
 
@@ -1803,33 +1815,37 @@ def main():
     print(f"     国际板块：{[(s['label'], len(s['items'])) for s in sections_international]}")
 
     print("[3/5] LLM 生成市场分析（国内 + 国际）...")
-    # 国内市场分析
-    analysis_domestic_ok = False
-    if items_domestic:
-        try:
-            analysis_domestic = generate_analysis(items_domestic, quotes, market_label="国内")
-            analysis_domestic_ok = bool(analysis_domestic.get("summary"))
-            print(f"     国内：突发事件 {len(analysis_domestic.get('emergencyEvents') or [])} 条，总结 {len(analysis_domestic.get('summary',''))} 字")
-        except Exception as exc:
-            analysis_domestic = dict(ANALYSIS_FALLBACK)
-            print(f"     [!] 国内分析生成失败：{exc!r}")
-    else:
-        analysis_domestic = dict(ANALYSIS_FALLBACK)
-        print("     跳过国内分析（无国内新闻）")
 
-    # 国际市场分析
-    analysis_international_ok = False
-    if items_international:
+    def _analysis_with_fallback(items, label):
+        if not items:
+            return dict(ANALYSIS_FALLBACK), False
         try:
-            analysis_international = generate_analysis(items_international, quotes, market_label="国际")
-            analysis_international_ok = bool(analysis_international.get("summary"))
-            print(f"     国际：突发事件 {len(analysis_international.get('emergencyEvents') or [])} 条，总结 {len(analysis_international.get('summary',''))} 字")
+            analysis = generate_analysis(items, quotes, market_label=label)
+            ok = bool(analysis.get("summary"))
+            print(f"     {label}：突发事件 {len(analysis.get('emergencyEvents') or [])} 条，总结 {len(analysis.get('summary', ''))} 字")
+            return analysis, ok
         except Exception as exc:
-            analysis_international = dict(ANALYSIS_FALLBACK)
-            print(f"     [!] 国际分析生成失败：{exc!r}")
-    else:
-        analysis_international = dict(ANALYSIS_FALLBACK)
-        print("     跳过国际分析（无国际新闻）")
+            print(f"     [!] {label}分析生成失败：{exc!r}")
+            return dict(ANALYSIS_FALLBACK), False
+
+    analysis_jobs = {}
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-analysis") as executor:
+        if items_domestic:
+            analysis_jobs["domestic"] = executor.submit(
+                _analysis_with_fallback, items_domestic, "国内"
+            )
+        if items_international:
+            analysis_jobs["international"] = executor.submit(
+                _analysis_with_fallback, items_international, "国际"
+            )
+        domestic_result = analysis_jobs.get("domestic")
+        international_result = analysis_jobs.get("international")
+        analysis_domestic, analysis_domestic_ok = (
+            domestic_result.result() if domestic_result else (dict(ANALYSIS_FALLBACK), False)
+        )
+        analysis_international, analysis_international_ok = (
+            international_result.result() if international_result else (dict(ANALYSIS_FALLBACK), False)
+        )
 
     print("[4/5] LLM 生成 A股/港股策略建议 ...")
 
@@ -1892,30 +1908,23 @@ def main():
 
     webhook = (os.environ.get("WECOM_WEBHOOK") or cfg.get("wecom_webhook", "")).strip()
     feishu_webhook = (os.environ.get("FEISHU_WEBHOOK") or cfg.get("feishu_webhook", "")).strip()
+    wechat_cfg = cfg.get("wechat_official", {}) or {}
+    wechat_appid = (os.environ.get("WECHAT_APPID") or wechat_cfg.get("appid", "")).strip()
+    wechat_appsecret = (os.environ.get("WECHAT_APPSECRET") or wechat_cfg.get("appsecret", "")).strip()
 
     if webhook:
         print("[5/5] 推送财经日报到企业微信群机器人 ...")
         title = f"财经日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
-        if dashboard_url:
-            print("     使用图文卡片模式（news）")
-            try:
-                resp = push_wecom_news_card(webhook, dashboard_url, title_prefix=title)
-                print("     企业微信返回：", resp)
-                if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
-                    print("     [!] 推送失败：", resp)
-            except Exception as exc:
-                print("     [!] 企业微信推送异常：", repr(exc))
-        else:
-            print("     无 dashboard_url，降级为 markdown 模式")
-            try:
-                resp = push_markdown(webhook, body, tail)
-                print("     企业微信返回：", resp)
-                if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
-                    print("     [!] 推送失败：", resp)
-            except Exception as exc:
-                print("     [!] 企业微信推送异常：", repr(exc))
-        return
+        try:
+            # 财经日报保持纯 news 卡片；卡片只指向财经页，不混入 AI 或监控链接。
+            resp = push_wecom_news_card(webhook, dashboard_url, title_prefix=title) if dashboard_url else push_markdown(webhook, body, tail)
+            print("     企业微信返回：", resp)
+            if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
+                print("     [!] 推送失败：", resp)
+        except Exception as exc:
+            print("     [!] 企业微信推送异常：", repr(exc))
 
+    # 公众号发布不应因上方渠道发送而提前 return；它是独立的输出渠道。
     if feishu_webhook:
         print("[5/5] 推送财经日报到飞书群机器人 ...")
         title = f"财经日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
@@ -1924,15 +1933,11 @@ def main():
             print("     飞书返回：", resp)
         except Exception as exc:
             print("     [!] 飞书推送异常：", repr(exc))
-        return
 
-    print("[5/5] 未配置推送渠道（WECOM_WEBHOOK / FEISHU_WEBHOOK），仅生成网页。")
+    if not webhook and not feishu_webhook:
+        print("[5/5] 未配置推送渠道（WECOM_WEBHOOK / FEISHU_WEBHOOK），仅生成网页。")
 
-    # 微信公众号发布（独立于推送渠道）
-    wechat_cfg = cfg.get("wechat_official", {}) or {}
-    wechat_enabled = wechat_cfg.get("enabled", False)
-    wechat_appid = (os.environ.get("WECHAT_APPID") or wechat_cfg.get("appid", "")).strip()
-    wechat_appsecret = (os.environ.get("WECHAT_APPSECRET") or wechat_cfg.get("appsecret", "")).strip()
+    wechat_enabled = bool(wechat_appid and wechat_appsecret) or wechat_cfg.get("enabled", False)
 
     if wechat_enabled and wechat_appid and wechat_appsecret:
         print("\n[额外] 发布到微信公众号...")
@@ -1940,43 +1945,22 @@ def main():
             from wechat_official import publish_to_wechat
             from wechat_content_formatter import format_finance_daily_for_wechat
             from cover_generator import get_or_create_cover, create_default_cover
-
-            # 格式化内容
             article_title, article_content, article_digest = format_finance_daily_for_wechat(data)
-
-            # 获取或生成封面图
-            date_str = data['meta']['date']
-            cover_path = get_or_create_cover(date_str, cover_type="finance")
-
-            # 如果封面生成失败，使用默认封面
+            cover_path = get_or_create_cover(data['meta']['date'], cover_type="finance")
             if not cover_path or not os.path.exists(cover_path):
-                print("     使用默认封面...")
                 cover_path = create_default_cover(cover_type="finance")
-
             if cover_path and os.path.exists(cover_path):
-                # 发布到公众号
                 publish_id = publish_to_wechat(
-                    appid=wechat_appid,
-                    appsecret=wechat_appsecret,
-                    title=article_title,
-                    content=article_content,
-                    author="AI Daily Push",
-                    digest=article_digest,
-                    content_source_url=dashboard_url,
-                    thumb_image_path=cover_path
+                    appid=wechat_appid, appsecret=wechat_appsecret,
+                    title=article_title, content=article_content,
+                    author="AI Daily Push", digest=article_digest,
+                    content_source_url=dashboard_url, thumb_image_path=cover_path
                 )
-
-                if publish_id:
-                    print(f"     ✓ 公众号发布成功！publish_id: {publish_id}")
-                else:
-                    print("     [!] 公众号发布失败")
+                print(f"     公众号发布结果：{publish_id or '失败'}")
             else:
                 print("     [!] 封面图不可用，跳过公众号发布")
-
-        except ImportError as e:
-            print(f"     [!] 缺少微信公众号发布模块：{e!r}")
-        except Exception as e:
-            print(f"     [!] 公众号发布异常：{e!r}")
+        except Exception as exc:
+            print(f"     [!] 公众号发布异常：{exc!r}")
     elif wechat_enabled:
         print("\n[额外] 微信公众号已启用但缺少 appid/appsecret，跳过发布")
 

@@ -11,10 +11,12 @@ import threading
 import urllib.request
 
 
-_LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
+_DEEPSEEK_MAX_CONCURRENCY = max(1, int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "2")))
+_ANALYSIS_MAX_CONCURRENCY = max(1, int(os.getenv("ANALYSIS_MAX_CONCURRENCY", "8")))
 _LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "2")))
 _LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "180")))
-_LLM_SEMAPHORE = threading.BoundedSemaphore(_LLM_MAX_CONCURRENCY)
+_DEEPSEEK_SEMAPHORE = threading.BoundedSemaphore(_DEEPSEEK_MAX_CONCURRENCY)
+_ANALYSIS_SEMAPHORE = threading.BoundedSemaphore(_ANALYSIS_MAX_CONCURRENCY)
 
 
 _BASE_URL_WARNED = False
@@ -64,6 +66,13 @@ def _llm_config():
     return api_key, base_url, translate_model, analysis_model
 
 
+def _semaphore_for_model(model, translate_model, analysis_model):
+    """按最终模型选择并发池；未知模型保守地占用 DeepSeek 配额。"""
+    if model == analysis_model:
+        return _ANALYSIS_SEMAPHORE
+    return _DEEPSEEK_SEMAPHORE
+
+
 def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=None):
     """
     调用 OpenAI 兼容接口并解析 JSON 对象
@@ -81,7 +90,7 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
     Raises:
         RuntimeError: 配置错误或调用失败
     """
-    api_key, base_url, translate_model, _analysis_model = _llm_config()
+    api_key, base_url, translate_model, analysis_model = _llm_config()
 
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
@@ -89,8 +98,9 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
 
+    resolved_model = model or translate_model
     payload = {
-        "model": model or translate_model,
+        "model": resolved_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -113,7 +123,7 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
                 },
             )
 
-            with _LLM_SEMAPHORE:
+            with _semaphore_for_model(resolved_model, translate_model, analysis_model):
                 with urllib.request.urlopen(req, timeout=timeout) as response:
                     body = json.loads(response.read().decode("utf-8"))
 
@@ -154,7 +164,7 @@ def call_llm(system_prompt, user_prompt, retries=None, model=None, timeout=None)
     Raises:
         RuntimeError: 配置错误或调用失败
     """
-    api_key, base_url, translate_model, _analysis_model = _llm_config()
+    api_key, base_url, translate_model, analysis_model = _llm_config()
 
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
@@ -162,8 +172,9 @@ def call_llm(system_prompt, user_prompt, retries=None, model=None, timeout=None)
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
 
+    resolved_model = model or translate_model
     payload = {
-        "model": model or translate_model,
+        "model": resolved_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -185,7 +196,7 @@ def call_llm(system_prompt, user_prompt, retries=None, model=None, timeout=None)
                 },
             )
 
-            with _LLM_SEMAPHORE:
+            with _semaphore_for_model(resolved_model, translate_model, analysis_model):
                 with urllib.request.urlopen(req, timeout=timeout) as response:
                     body = json.loads(response.read().decode("utf-8"))
 

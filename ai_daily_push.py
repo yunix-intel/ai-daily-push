@@ -29,8 +29,8 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 import json, sys, os, re, html, time, threading, urllib.parse, urllib.request, urllib.error
 
 
-_LLM_MAX_CONCURRENCY = max(1, int(os.getenv("LLM_MAX_CONCURRENCY", "2")))
-_LLM_SEMAPHORE = threading.BoundedSemaphore(_LLM_MAX_CONCURRENCY)
+_DEEPSEEK_MAX_CONCURRENCY = max(1, int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "2")))
+_DEEPSEEK_SEMAPHORE = threading.BoundedSemaphore(_DEEPSEEK_MAX_CONCURRENCY)
 _LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "1")))
 _LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "120")))
 import xml.etree.ElementTree as ET
@@ -222,23 +222,33 @@ def aggregate_sources(primary):
                 seen.add(key)
                 all_items.append(item)
 
-    # 从 RSS 源收集
-    for source_name, url in RSS_FEEDS:
+    # RSS 源彼此独立；并行只返回数据，去重和分类仍在主线程完成。
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fetch_one(feed):
+        source_name, url = feed
         try:
-            source_items = fetch_rss(source_name, url)
-            for item in source_items:
-                key = re.sub(r"\W+", "", item["title"].lower())
-                if item["title"] and key and key not in seen:
-                    seen.add(key)
-                    all_items.append({
-                        "title": item["title"],
-                        "summary": item["summary"],
-                        "source": {"name": item["source"]},
-                        "links": {"original": item["link"], "aihot": item["link"]}
-                    })
-            print(f"     {source_name}：抓取 {len(source_items)} 条")
+            return source_name, fetch_rss(source_name, url), None
         except Exception as exc:
-            print(f"     来源跳过：{source_name}（{exc}）")
+            return source_name, [], exc
+
+    with ThreadPoolExecutor(max_workers=min(4, len(RSS_FEEDS)), thread_name_prefix="ai-rss") as executor:
+        fetched = list(executor.map(fetch_one, RSS_FEEDS))
+
+    for source_name, source_items, error in fetched:
+        if error is not None:
+            print(f"     来源跳过：{source_name}（{error}）")
+            continue
+        for item in source_items:
+            key = re.sub(r"\W+", "", item["title"].lower())
+            if item["title"] and key and key not in seen:
+                seen.add(key)
+                all_items.append({
+                    "title": item["title"], "summary": item["summary"],
+                    "source": {"name": item["source"]},
+                    "links": {"original": item["link"], "aihot": item["link"]}
+                })
+        print(f"     {source_name}：抓取 {len(source_items)} 条")
 
     # 统一智能分类
     sections = classify_ai_items(all_items)
@@ -446,7 +456,7 @@ def call_ai_llm_json(system_prompt, user_prompt, retries=None, timeout=None):
                     "Authorization": f"Bearer {api_key}",
                 },
             )
-            with _LLM_SEMAPHORE:
+            with _DEEPSEEK_SEMAPHORE:
                 with urllib.request.urlopen(req, timeout=timeout) as response:
                     body = json.loads(response.read().decode("utf-8"))
             content = body["choices"][0]["message"]["content"]
@@ -1182,9 +1192,9 @@ HTML_TMPL = r"""<!DOCTYPE html>
 </head>
 <body>
 <nav class="global-nav"><div class="wrap">
-  <a href="ai_daily_dashboard.html" class="active">AI 日报</a>
-  <a href="finance_dashboard.html">财经日报</a>
-  <a href="push_history_report.html">推送监控</a>
+  <a href="index.html" class="active">AI 日报</a>
+  <a href="finance.html">财经日报</a>
+  <a href="monitor.html">推送监控</a>
 </div></nav>
 <header class="hero"><div class="wrap">
   <span class="kicker">● AI 日报 · 多来源聚合</span>
@@ -1676,7 +1686,9 @@ def main():
         if all_news_items:
             # LLM 调用包装器
             def metrics_llm_caller(system_prompt, user_prompt, model=None):
-                return call_llm_json(system_prompt, user_prompt, model=model)
+                from llm_helpers import _llm_config
+                analysis_model = _llm_config()[3]
+                return call_llm_json(system_prompt, user_prompt, model=model or analysis_model)
 
             # 提取指标
             metrics_result = extract_metrics_from_news(all_news_items, metrics_llm_caller)
@@ -1700,7 +1712,13 @@ def main():
         def llm_caller(system_prompt, user_prompt, model=None):
             """LLM 调用包装器，返回纯文本"""
             try:
-                result = call_llm_json(system_prompt, user_prompt, model=model)
+                result = call_llm_json(
+                    system_prompt,
+                    user_prompt,
+                    model=model or _ai_llm_config()[2],
+                    retries=0,
+                    timeout=_LLM_TIMEOUT,
+                )
                 # 如果返回的是dict，转为JSON字符串
                 if isinstance(result, dict):
                     return json.dumps(result, ensure_ascii=False)
@@ -1771,9 +1789,8 @@ def main():
                 print("     ⚠️ 推送失败：", failed)
         except Exception as e:
             print("     ⚠️ 企业微信群机器人推送异常：", repr(e))
-        return
 
-    if feishu_webhook:
+    elif feishu_webhook:
         print("[4/4] 推送到飞书群机器人（-> 飞书个人）...")
         title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         try:
@@ -1783,9 +1800,8 @@ def main():
                 print("     ⚠️ 推送失败：", resp.get("msg"), resp)
         except Exception as e:
             print("     ⚠️ 飞书推送异常：", repr(e))
-        return
 
-    if corpid and corpsecret and agentid:
+    elif corpid and corpsecret and agentid:
         print("[4/4] 推送到企业微信（应用消息 -> 个人微信）...")
         try:
             resp = push_wecom(corpid, corpsecret, agentid, touser, md)
@@ -1794,9 +1810,8 @@ def main():
                 print("     ⚠️ 推送失败：", resp.get("errmsg"), resp)
         except Exception as e:
             print("     ⚠️ 企业微信推送异常：", repr(e))
-        return
 
-    if token:
+    elif token:
         print("[4/4] 推送到 pushplus（个人微信）...")
         title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%Y年%m月%d日 {wd}')}"
         resp = push_pushplus(token, md, title, api, topic or None)
