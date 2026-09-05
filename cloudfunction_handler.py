@@ -93,7 +93,7 @@ def main_handler(event, context):
         repo = os.environ.get('GITHUB_REPOSITORY', '')
         token = os.environ.get('GITHUB_TOKEN', '')
         workflow = os.environ.get('GITHUB_WORKFLOW', '')
-        expected_time_str = os.environ.get('EXPECTED_RUN_TIME', '21:30')  # UTC 21:30 = 北京时间次日 05:30
+        expected_time_str = os.environ.get('EXPECTED_RUN_TIME', '23:00')  # UTC 23:00 = 北京时间次日 07:00
         expected_tz_str = os.environ.get('EXPECTED_TIMEZONE', '')
         threshold = int(os.environ.get('DELAY_THRESHOLD', 600))
 
