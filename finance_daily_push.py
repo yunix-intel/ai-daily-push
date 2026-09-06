@@ -644,6 +644,10 @@ def translate_finance_items(items):
         item["originalTitle"] = item["title"]
         item["originalSummary"] = item["summary"]
 
+    if os.getenv("TRANSLATION_ENABLED", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        print("     已关闭标题和摘要翻译，保留英文原文")
+        return items
+
     # 2. 找出英文条目：来源标记 + 内容判定，双保险
     en_indexes = [
         i for i, item in enumerate(items)
@@ -1785,13 +1789,8 @@ def main():
         print("     [2.2] 翻译国际要闻标题摘要 ...")
         translate_finance_items(items_international)
 
-    # 预翻译核心文章全文
-    if items_international:
-        print("     [2.3] 预翻译核心文章全文 ...")
-        try:
-            pre_translate_articles(items_international)
-        except Exception as exc:
-            print(f"     [!] 全文翻译失败，跳过：{exc}")
+    # 全文翻译会显著放大抓取和 LLM 延迟，默认关闭；标题摘要翻译仍保留。
+    print("     [2.3] 已关闭核心文章全文翻译；标题和摘要翻译保留")
 
     print("     [2.4] 使用启发式突发事件识别（跳过可选 LLM 识别）...")
     breaking_events_domestic = identify_breaking_news(items_domestic, None) if items_domestic else []

@@ -303,14 +303,15 @@ def publish_to_wechat_official(title, author, digest, content, thumb_image_path,
 
     wechat_config = config.get('wechat_official', {})
 
-    # 检查是否启用
-    if not wechat_config.get('enabled', False):
-        print("  微信公众号推送未启用（配置文件 enabled=false）")
-        return False
-
     # 获取 appid 和 appsecret（优先环境变量）
     appid = os.getenv('WECHAT_APPID') or wechat_config.get('appid', '')
     appsecret = os.getenv('WECHAT_APPSECRET') or wechat_config.get('appsecret', '')
+
+    # 生产环境通过完整环境变量显式启用，不受本地配置文件 enabled=false 阻断。
+    env_credentials_present = bool(os.getenv('WECHAT_APPID') and os.getenv('WECHAT_APPSECRET'))
+    if not wechat_config.get('enabled', False) and not env_credentials_present:
+        print("  微信公众号推送未启用（配置文件 enabled=false 且未提供环境变量凭据）")
+        return False
 
     if not appid or not appsecret:
         print("  [WARN] 微信公众号 AppID 或 AppSecret 未配置")

@@ -531,6 +531,10 @@ def translate_items(report, give_up_after=6):
         item["originalTitle"] = item.get("title", "")
         item["originalSummary"] = item.get("summary", "")
 
+    if os.getenv("TRANSLATION_ENABLED", "1").strip().lower() not in ("1", "true", "yes", "on"):
+        print("     已关闭标题和摘要翻译，保留英文原文")
+        return report
+
     pending = [i for i, item in enumerate(all_items)
                if _needs_translation(item.get("title")) or _needs_translation(item.get("summary"))]
     if not pending:
@@ -1055,8 +1059,14 @@ def shape(report, market_insights=None, news_metrics=None):
                 bool(re.search(r'[a-zA-Z]{3,}', original_title))  # 包含3个以上连续英文字母
             )
 
+            # 全文翻译默认关闭；标题和摘要翻译仍由 TRANSLATION_ENABLED 控制。
+            full_text_translation_enabled = os.getenv(
+                "FULL_TEXT_TRANSLATION_ENABLED", "0"
+            ).strip().lower() in ("1", "true", "yes", "on")
             # 生成翻译页面（走配置的 LLM 网关）
-            if not translated_page and needs_translation and original_link.startswith("http") and page_translate_budget > 0:
+            if (full_text_translation_enabled and not translated_page
+                    and needs_translation and original_link.startswith("http")
+                    and page_translate_budget > 0):
                 page_translate_budget -= 1
                 try:
                     translated_file = translate_page_with_llm(original_link, title)
@@ -1703,57 +1713,8 @@ def main():
         print(f"     [WARN] 指标提取失败，跳过：{e}")
         news_metrics = []
 
-    # [新增] 全文翻译（AI日报）
-    print("[1.7/4] 全文翻译英文新闻 ...")
-    try:
-        from article_translator import batch_translate_articles
-
-        # 创建 LLM 调用包装器
-        def llm_caller(system_prompt, user_prompt, model=None):
-            """LLM 调用包装器，返回纯文本"""
-            try:
-                result = call_llm_json(
-                    system_prompt,
-                    user_prompt,
-                    model=model or _ai_llm_config()[2],
-                    retries=0,
-                    timeout=_LLM_TIMEOUT,
-                )
-                # 如果返回的是dict，转为JSON字符串
-                if isinstance(result, dict):
-                    return json.dumps(result, ensure_ascii=False)
-                return str(result)
-            except Exception as e:
-                print(f"     [WARN] LLM调用失败：{e}")
-                return ""
-
-        # 合并所有新闻条目
-        all_news_items = []
-        for section in combined_report.get('sections', []):
-            all_news_items.extend(section.get('items', []))
-
-        if all_news_items:
-            # 统一翻译器输入字段：AI HOT 使用 links.original，翻译器使用 link；
-            # 同时补齐筛选所需的区域和重要性，避免候选被静默判为不可翻译。
-            for item in all_news_items:
-                links = item.get("links") or {}
-                if not item.get("link"):
-                    item["link"] = links.get("original") or links.get("aihot") or ""
-                item.setdefault("region", "international")
-                item.setdefault("importance_score", 5)
-
-            # 批量翻译文章（最多5篇）
-            translated_count = batch_translate_articles(
-                all_news_items,
-                llm_caller=llm_caller,
-                max_count=5
-            )
-            print(f"     ✓ 全文翻译完成：{translated_count} 篇")
-        else:
-            print(f"     无新闻数据，跳过全文翻译")
-
-    except Exception as e:
-        print(f"     [WARN] 全文翻译失败，跳过：{e}")
+    # 全文翻译会显著放大抓取和 LLM 延迟，默认且生产环境均关闭。
+    print("[1.7/4] 已关闭新闻全文翻译；标题和摘要翻译保留")
 
     data = shape(combined_report, market_insights=market_insights, news_metrics=news_metrics)
     print(f"     成功：共 {data['meta']['total']} 条，版块 {[s['label'] for s in data['sections']]}")
