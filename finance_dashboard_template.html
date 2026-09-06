@@ -187,8 +187,8 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   let nav='<a href="#domestic-section">国内要闻<b>'+meta.domesticCount+'</b></a><a href="#intl-section">国际要闻<b>'+meta.internationalCount+'</b></a>';
   const bloggerViews=DATA.bloggerViews||[];
   if(bloggerViews.length) nav+='<a href="#blogger-section">博主观点<b>'+bloggerViews.length+'</b></a>';
-  const twitter = DATA.twitter || {};
-  const twitterCount = (twitter.rumors||[]).length + (twitter.media||[]).length;
+  const twitterData = DATA.twitter || {};
+  const twitterCount = (twitterData.rumors||[]).length + (twitterData.media||[]).length;
   if(twitterCount > 0) nav+='<a href="#twitter-section">Twitter观察<b>'+twitterCount+'</b></a>';
   document.getElementById('navLinks').innerHTML=nav;
   let main='';

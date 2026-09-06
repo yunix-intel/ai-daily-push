@@ -349,4 +349,44 @@ gh workflow run monitor.yml --ref <待测分支或提交对应分支>
 5. 使用当前最终提交执行浏览器验证和一次真实线上 workflow，完成步骤 5。
 6. 运行全套回归，审计矩阵并形成最终结论，完成步骤 6。
 
-任何步骤出现 FAIL，都回到对应步骤修复后重测；不得用后续页面检查替代前置测试失败，也不得用历史成功运行替代当前提交证据。
+
+
+---
+
+# 当前候选版审计补充（2026-09-06）
+
+**候选版本：** `v4.0.0-rc.1`
+**当前工作树基线：** `4f2e50b fix: keep summary translation and disable full text translation`（候选提交还包含本次测试基础设施、页面和版本文档变更）
+**全量 unittest：** `Ran 46 tests in 0.790s`，`OK`，0 failures / 0 errors。
+**生产目录定向编译：** `compileall` PASS。全目录编译未纳入未跟踪 `.claude/worktrees/` 副本。
+**历史线上证据：** daily run `34008168440`、monitor run `34008950246`；四个 Pages 入口历史返回 HTTP 200；企业微信历史响应 `errcode: 0`。这些记录不是当前候选提交的最新线上验收，不能替代重测。
+**当前浏览器证据：** 本地 `finance_dashboard.html` 桌面加载成功，console 无错误，snapshot 含行情、策略、Tab 和导航；移动尺寸切换已执行。
+**当前外部阻塞：** 微信公众号 access token 仍受 Actions runner IP 白名单拒绝（`invalid ip ... not in whitelist`），尚无真实 `publish_id`。
+**覆盖率：** 当前环境未安装 `coverage`，无法提供可审计的行/分支覆盖率。
+
+## 候选版 20 项矩阵（当前证据）
+
+| 编号 | 当前结论 | 当前证据/限制 |
+|---|---|---|
+| 1 | PASS | workflow concurrency、历史记录和延迟监控静态/单元证据 |
+| 2 | PASS | cron 锚点和窗口逻辑测试 |
+| 3 | PASS | HTML 对齐专项证据 |
+| 4 | PASS | 市场数据板块契约及失败降级测试 |
+| 5 | PASS | 标题/摘要翻译入口与回退静态/契约证据 |
+| 6 | PASS | 非交易时段/上一交易日行情与零值测试 |
+| 7 | PASS | 财经窗口及历史格式兼容测试 |
+| 8 | BLOCKED | action 版本已升级；当前候选尚未重跑线上日志确认 Node 警告 |
+| 9 | PASS | workflow 复制 index/finance/history/monitor；历史 Pages 四入口 HTTP 200 |
+| 10 | PASS | 北向、行业、个股资金流独立失败/成功契约测试 |
+| 11 | PASS | 全部/国内/国际 Tab 契约及本地 snapshot |
+| 12 | PASS | 分类和无 LLM 关键词回退测试 |
+| 13 | PASS | 盘中信息过滤确定性测试 |
+| 14 | PASS | 财经标题/摘要翻译及原文回退测试 |
+| 15 | PASS | 中国/A 股优先国内、纯国际关键词归国际测试 |
+| 16 | PASS | `0 23 * * *` UTC 对应北京时间 07:00 静态检查 |
+| 17 | PASS | 微博/博客配置及抓取器契约证据 |
+| 18 | PASS | Twitter rumor/media 分组和失败降级契约证据 |
+| A | PASS | 财经页面 Twitter 展示和本地 console 无重复声明 |
+| B | PASS | 全文翻译关闭生产策略及翻译字段回退静态证据 |
+
+**正式版判定：** 当前不能宣称 18+2 全部通过。除上表线上复验的 BLOCKED 外，全功能白盒覆盖率和公众号真实发布仍未满足正式发布门槛，因此只允许候选版 `v4.0.0-rc.1`，不得发布正式 `v4.0.0`。
