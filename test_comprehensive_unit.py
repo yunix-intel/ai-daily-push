@@ -96,7 +96,9 @@ class TestMoneyFlowScraper(unittest.TestCase):
     def test_network_error_returns_contract(self):
         from scrapers import money_flow_scraper as m
         with patch.object(m.requests, "get", side_effect=RuntimeError("offline")):
-            result = m.MoneyFlowScraper().fetch_north_flow()
+            scraper = m.MoneyFlowScraper()
+            with patch.object(scraper, "_load_cached_north", return_value=None):
+                result = scraper.fetch_north_flow()
         self.assertFalse(result["available"])
         self.assertIn("reason", result)
 
@@ -159,7 +161,8 @@ class TestNorthboundPostCloseFallback(unittest.TestCase):
         scraper = MoneyFlowScraper()
         with patch.object(scraper, "_fetch_eastmoney_post_close", side_effect=TimeoutError()):
             with patch.object(scraper, "_fetch_10jqka_post_close", side_effect=RuntimeError("blocked")):
-                result = scraper.fetch_north_flow("2026-09-03")
+                with patch.object(scraper, "_load_cached_north", return_value=None):
+                    result = scraper.fetch_north_flow("2026-09-03")
         self.assertFalse(result["available"])
         self.assertEqual(result["source"], "none")
         self.assertIn("eastmoney", result["reason"])
@@ -207,13 +210,16 @@ class TestGithubMonitor(unittest.TestCase):
     def test_current_constructor_and_http_architecture(self):
         import github_monitor as m
         monitor = m.GitHubMonitor(repo="owner/repo", workflow_name="CI", token="token")
-        body = {"workflow_runs": [{"id": 1, "run_number": 4, "conclusion": "success",
-                                    "created_at": "2026-09-01T00:00:00Z", "run_started_at": "2026-09-01T00:01:30Z",
+        body = {"workflow_runs": [{"id": 1, "run_number": 4, "event": "schedule",
+                                    "status": "completed", "conclusion": "success",
+                                    "created_at": "2026-09-01T00:01:30Z", "run_started_at": "2026-09-01T00:02:00Z",
+                                    "updated_at": "2026-09-01T00:03:00Z",
                                     "html_url": "https://example.invalid/run"}]}
-        with patch.object(monitor, "_http_get", return_value=body):
+        with patch.object(monitor, "_get_workflow_id", return_value=123), \
+                patch.object(monitor, "_http_get", return_value=body):
             runs = monitor.get_recent_runs(limit=1)
         self.assertEqual(len(runs), 1)
-        self.assertEqual(monitor.analyze_delays(runs)["max_delay_seconds"], 90.0)
+        self.assertEqual(monitor.analyze_delays(runs)["max_delay_seconds"], 3690.0)
 
 
 class TestConfigAndRendering(unittest.TestCase):

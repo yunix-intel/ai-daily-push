@@ -113,166 +113,73 @@ def main_handler(event, context):
         print(f"延迟阈值: {threshold} 秒")
         print()
 
-        # 创建监控器
-        monitor = GitHubMonitor(repo=repo, workflow_name=workflow, token=token)
+        # Normalize an optional local expected time to the UTC HH:MM contract used
+        # by GitHubMonitor. The date matters for zones with daylight saving time.
+        expected_time_utc = expected_time_str
+        if expected_tz_str:
+            try:
+                expected_tz = ZoneInfo(expected_tz_str)
+                local_now = datetime.now(timezone.utc).astimezone(expected_tz)
+                hour, minute = map(int, expected_time_str.split(":"))
+                local_expected = local_now.replace(
+                    hour=hour, minute=minute, second=0, microsecond=0
+                )
+                expected_time_utc = local_expected.astimezone(
+                    timezone.utc).strftime("%H:%M")
+            except Exception as exc:
+                print(f"  [!] 时区 {expected_tz_str} 无效，回退到 UTC: {exc}")
 
-        # 获取今天的运行记录
-        today = datetime.now(timezone.utc).date()
+        monitor = GitHubMonitor(
+            repo=repo,
+            workflow_name=workflow,
+            token=token,
+            expected_time=expected_time_utc,
+        )
         runs = monitor.get_recent_runs(limit=10)
+        evaluation = monitor.evaluate_latest(runs, threshold)
+        state = evaluation["state"]
+        delay_seconds = float(evaluation.get("delay_seconds") or 0)
+        result = {
+            "status": state,
+            "delay_seconds": delay_seconds,
+            "scheduled_at": evaluation.get("scheduled_at", ""),
+            "run_number": evaluation.get("run_number"),
+            "alert": bool(evaluation.get("alert")),
+        }
 
-        # 过滤今天的运行
-        today_runs = []
-        for run in runs:
-            created_at = run.get('created_at', '')
-            if created_at:
-                created_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                if created_time.date() == today:
-                    today_runs.append(run)
-
-        if not today_runs:
-            msg = f"今天 {today} 还没有运行记录"
-            print(f"⚠️  {msg}")
-            send_alert("WARNING", "GitHub Actions 未运行", msg, {
-                "仓库": repo,
-                "检查时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
+        if not evaluation.get("alert"):
+            label = "等待计划任务" if state == "waiting" else "运行正常"
+            print(f"[OK] {label}: {state}，相对计划时间 {delay_seconds:.0f} 秒")
             return {
-                'statusCode': 200,
-                'body': json.dumps({'status': 'warning', 'message': msg}, ensure_ascii=False)
+                "statusCode": 200,
+                "body": json.dumps(result, ensure_ascii=False),
             }
 
-        # 检查最近一次运行
-        latest_run = today_runs[0]
-        created_at = latest_run.get('created_at', '')
-        run_started_at = latest_run.get('run_started_at', '')
-        conclusion = latest_run.get('conclusion', '')
-        status = latest_run.get('status', '')
-
-        # 还在跑的运行没有 conclusion（是 None/空），拿它跟 "success" 比
-        # 会判定成「运行失败」，每天定时器早于 workflow 结束时都会误报。
-        if status in ("queued", "in_progress", "waiting", "requested", "pending"):
-            msg = f"运行 #{latest_run.get('run_number')} 仍在进行中（{status}），跳过本次判定"
-            print(f"⏳ {msg}")
-            return {
-                'statusCode': 200,
-                'body': json.dumps({'status': 'running', 'message': msg},
-                                   ensure_ascii=False)
-            }
-
-        if created_at and run_started_at:
-            created_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-            started_time = datetime.fromisoformat(run_started_at.replace('Z', '+00:00'))
-
-            # 计算预期时间
-            expected_hour, expected_minute = map(int, expected_time_str.split(':'))
-
-            # 根据 EXPECTED_TIMEZONE 决定时区
-            if expected_tz_str:
-                try:
-                    tz = ZoneInfo(expected_tz_str)
-                    # 在指定时区构造时间，然后转为 UTC
-                    expected_time = datetime.combine(
-                        today,
-                        datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
-                    ).replace(tzinfo=tz).astimezone(timezone.utc)
-                except Exception as e:
-                    print(f"  [!] 时区 {expected_tz_str} 无效，回退到 UTC: {e}")
-                    expected_time = datetime.combine(
-                        today,
-                        datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
-                    ).replace(tzinfo=timezone.utc)
-            else:
-                # 默认 UTC
-                expected_time = datetime.combine(
-                    today,
-                    datetime.min.time().replace(hour=expected_hour, minute=expected_minute)
-                ).replace(tzinfo=timezone.utc)
-
-            # 计算延迟
-            delay_seconds = (started_time - expected_time).total_seconds()
-
-            # 负延迟 = 跑在预期时间之前（多半是手动触发，或 EXPECTED_RUN_TIME
-            # 填成了北京时间）。这种情况不该按「提前」处理，夹到 0，
-            # 否则日志里会出现 -11482 秒这种没意义的数字。
-            if delay_seconds < 0:
-                print(f"  [i] 实际启动早于预期时间 {abs(delay_seconds):.0f} 秒"
-                      f"（手动触发，或 EXPECTED_RUN_TIME={expected_time_str} 未按 UTC 填写）")
-                delay_seconds = 0
-
-            print(f"最近运行:")
-            print(f"  运行编号: {latest_run.get('run_number')}")
-            print(f"  预期时间: {format_beijing_time(expected_time)}")
-            print(f"  实际时间: {format_beijing_time(started_time)}")
-            print(f"  延迟: {delay_seconds:.0f} 秒 ({delay_seconds/60:.1f} 分钟)")
-            print(f"  状态: {conclusion}")
-
-            # 检查延迟
-            if delay_seconds > threshold:
-                print(f"❌ 延迟超过阈值")
-                send_alert("ERROR", "GitHub Actions 推送延迟",
-                    f"延迟 {delay_seconds:.0f} 秒（{delay_seconds/60:.1f} 分钟）",
-                    {
-                        "仓库": repo,
-                        "运行编号": latest_run.get('run_number'),
-                        "预期时间": format_beijing_time(expected_time),
-                        "实际时间": format_beijing_time(started_time),
-                        "延迟": f"{delay_seconds:.0f}秒",
-                        "状态": conclusion,
-                        "链接": latest_run.get('html_url', '')
-                    }
-                )
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps({
-                        'status': 'error',
-                        'message': 'Delay detected',
-                        'delay_seconds': delay_seconds
-                    }, ensure_ascii=False)
-                }
-
-            # 检查运行状态
-            if conclusion != "success":
-                print(f"❌ 运行失败: {conclusion}")
-                send_alert("ERROR", "GitHub Actions 运行失败",
-                    f"运行状态: {conclusion}",
-                    {
-                        "仓库": repo,
-                        "运行编号": latest_run.get('run_number'),
-                        "状态": conclusion,
-                        "链接": latest_run.get('html_url', '')
-                    }
-                )
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps({
-                        'status': 'error',
-                        'message': 'Run failed',
-                        'conclusion': conclusion
-                    }, ensure_ascii=False)
-                }
-
-            print("✅ 运行正常")
-            return {
-                'statusCode': 200,
-                'body': json.dumps({
-                    'status': 'success',
-                    'message': 'All good',
-                    'delay_seconds': delay_seconds,
-                    'conclusion': conclusion
-                }, ensure_ascii=False)
-            }
-
-        # created_at / run_started_at 缺失时原来会直接落到函数末尾返回 None。
-        # 阿里云 FC 对 None 返回值会报调用错误（函数被判定为执行异常），
-        # 而且这条路径什么都没告警，等于静默失灵。
-        msg = (f"运行 #{latest_run.get('run_number')} 缺少时间字段"
-               f"（created_at={created_at!r}, run_started_at={run_started_at!r}），"
-               f"无法计算延迟")
-        print(f"⚠️  {msg}")
+        labels = {
+            "missing": "GitHub Actions 计划任务未创建",
+            "queued": "GitHub Actions 计划任务排队延迟",
+            "in_progress": "GitHub Actions 计划任务仍在运行",
+            "failed": "GitHub Actions 计划任务运行失败",
+            "success": "GitHub Actions 计划任务调度延迟",
+        }
+        title = labels.get(state, "GitHub Actions 状态异常")
+        level = "ERROR" if state in ("missing", "failed") else "WARNING"
+        message = f"相对计划时间 {delay_seconds:.0f} 秒（阈值 {threshold} 秒）"
+        print(f"[{level}] {title}: {message}")
+        send_alert(level, title, message, {
+            "仓库": repo,
+            "Workflow": workflow,
+            "状态": state,
+            "运行编号": evaluation.get("run_number", "未创建"),
+            "计划时间": evaluation.get("scheduled_at", ""),
+            "链接": evaluation.get("html_url", ""),
+        })
+        result["message"] = message
+        # A monitor invocation that detects a hard condition must itself fail so
+        # serverless health checks do not mistake an emitted alert for success.
         return {
-            'statusCode': 200,
-            'body': json.dumps({'status': 'warning', 'message': msg,
-                                'conclusion': conclusion}, ensure_ascii=False)
+            "statusCode": 503,
+            "body": json.dumps(result, ensure_ascii=False),
         }
 
     except Exception as e:

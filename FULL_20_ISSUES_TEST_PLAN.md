@@ -111,7 +111,7 @@ python -m pip freeze
 新增或整理 fixture，至少覆盖：
 
 - 微博成功、单镜像失败、全部镜像失败。
-- Twitter rumor、media、时间窗口外条目、全部镜像失败。
+- Twitter rumors、media、comments、时间窗口外条目、全部镜像失败和官方 API 不可用时的独立降级。
 - OpenRouter/Artificial Analysis 成功、超时、空响应、模块不可用。
 - 英文标题/摘要、全文翻译成功、全文提取失败、LLM 504 重试后失败。
 - 北向、板块、个股资金流向分别成功和分别失败。
@@ -153,8 +153,8 @@ fixture 不得依赖 `example.com` 等不可控外部页面；需要测试失败
 | 15 | 新闻分类逻辑 | 中国/A股/上证/央行等内容优先归国内，即使来源是 Bloomberg/Reuters；纯国际关键词归国际；来源仅作为后备 |
 | 16 | 北京 07:00 触发 | `daily.yml` cron 为 UTC 23:00；换算为北京时间 07:00；AI、财经步骤使用相同时间配置 |
 | 17 | 唐史主任微博支持 | 配置类型为 `weibo` 时走微博抓取器；平台 URL 为 `weibo.com/u/...`；新浪博客博主仍走博客 URL |
-| 18 | X/Twitter 财经抓取 | rumor/media 分组、时间窗口和失败状态均保留；来源链接正确；失败不会让财经日报崩溃 |
-| A | Twitter 分类展示 | rumor 和 media 都进入最终 HTML；rumor 显示“未经证实”提示；无数据或失败显示状态卡 |
+| 18 | X/Twitter 财经抓取 | rumors/media/comments 分组、时间窗口和失败状态均保留；来源链接正确；comments 始终未经证实；失败不会让财经日报崩溃 |
+| A | Twitter 分类展示 | rumors、media 和 comments 都进入最终 HTML；rumors/comments 显示“未经证实”提示；无数据或失败显示状态卡 |
 | B | AI 全文翻译链路 | `link`、`translated_content`、`original_content` 从翻译器进入 shape，再进入 HTML；展开/收起字段完整 |
 
 ## 3.1 额外静态检查
@@ -357,12 +357,12 @@ gh workflow run monitor.yml --ref <待测分支或提交对应分支>
 
 **候选版本：** `v4.0.0-rc.1`
 **当前工作树基线：** `4f2e50b fix: keep summary translation and disable full text translation`（候选提交还包含本次测试基础设施、页面和版本文档变更）
-**全量 unittest：** `Ran 46 tests in 0.790s`，`OK`，0 failures / 0 errors。
-**生产目录定向编译：** `compileall` PASS。全目录编译未纳入未跟踪 `.claude/worktrees/` 副本。
-**历史线上证据：** daily run `34008168440`、monitor run `34008950246`；四个 Pages 入口历史返回 HTTP 200；企业微信历史响应 `errcode: 0`。这些记录不是当前候选提交的最新线上验收，不能替代重测。
-**当前浏览器证据：** 本地 `finance_dashboard.html` 桌面加载成功，console 无错误，snapshot 含行情、策略、Tab 和导航；移动尺寸切换已执行。
-**当前外部阻塞：** 微信公众号 access token 仍受 Actions runner IP 白名单拒绝（`invalid ip ... not in whitelist`），尚无真实 `publish_id`。
-**覆盖率：** 当前环境未安装 `coverage`，无法提供可审计的行/分支覆盖率。
+**全量 unittest（2026-09-07 重测）：** `Ran 122 tests in 13.405s`，`OK`，0 failures / 0 errors。
+**tests/ 子套件（2026-09-07 重测）：** `Ran 8 tests in 28.949s`，`OK`。
+**财经完整入口套件（2026-09-07 重测）：** 集成 3/3、边界 6/6、性能检查通过，总耗时 3.51s。
+**页面契约专项（2026-09-07 重测）：** 5/5 PASS。
+**覆盖率（2026-09-07 重测）：** `coverage 7.16.0`；122 项 unittest 执行通过，生产代码行覆盖率 **66%**（6362 statements，1961 missed，2006 branches，293 partial branches）。覆盖率报告已生成，但尚未达到全面覆盖门槛。
+**当前外部阻塞：** 微信公众号真实认证、账号类型及素材/草稿/发布接口权限仍待核实，尚无真实 `publish_id`；X API 权限、配额和线上可用性未验收。
 
 ## 候选版 20 项矩阵（当前证据）
 

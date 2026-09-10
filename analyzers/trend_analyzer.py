@@ -30,7 +30,8 @@ class TrendAnalyzer:
         historical = self._load_historical_data(days_back)
 
         if not historical:
-            return {"trends": [], "note": "无足够历史数据"}
+            return {"trends": [], "history_status": "missing",
+                    "history_count": 0, "note": "无足够历史数据"}
 
         # 分析价格趋势
         price_trends = self._analyze_price_trends(current_data, historical)
@@ -40,6 +41,9 @@ class TrendAnalyzer:
 
         return {
             "period": f"past_{days_back}_days",
+            "history_status": "restored",
+            "history_count": len(historical),
+            "compared_with": historical[0].get("date", ""),
             "price_trends": price_trends,
             "ranking_trends": ranking_trends
         }

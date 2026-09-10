@@ -9,6 +9,7 @@ import re
 from datetime import datetime, date
 import math
 import os
+from pathlib import Path
 
 
 class MoneyFlowScraper:
@@ -28,6 +29,69 @@ class MoneyFlowScraper:
             'Referer': 'https://data.eastmoney.com/'
         }
         self.timeout = 15
+        self.cache_path = Path(os.environ.get(
+            "MONEY_FLOW_CACHE", "data/market_data/money_flow_north.json"
+        ))
+
+    def _load_cached_north(self, target_date):
+        """Return the newest valid cached session not later than target_date."""
+        try:
+            payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        records = payload if isinstance(payload, list) else [payload]
+        valid = []
+        for record in records:
+            if not isinstance(record, dict) or not record.get("available"):
+                continue
+            trade_date = str(record.get("trade_date") or record.get("date") or "")
+            if not self._valid_cache_date(trade_date, target_date):
+                continue
+            item = dict(record)
+            item["stale"] = True
+            item["collection_mode"] = "cached_post_close"
+            item["reason"] = f"实时数据不可用，显示最近有效交易日 {trade_date} 的缓存"
+            valid.append(item)
+        return max(valid, key=lambda item: item.get("trade_date") or item.get("date")) if valid else None
+
+    @staticmethod
+    def _valid_cache_date(trade_date, target_date):
+        """Accept only real ISO dates not later than the requested session."""
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", trade_date):
+            return False
+        try:
+            date.fromisoformat(trade_date)
+            date.fromisoformat(str(target_date))
+        except ValueError:
+            return False
+        return trade_date <= str(target_date)
+
+    def _save_cached_north(self, record):
+        """Persist only a successful, non-sensitive northbound observation."""
+        if not isinstance(record, dict) or not record.get("available"):
+            return
+        try:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            existing = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            records = existing if isinstance(existing, list) else [existing]
+        except (OSError, json.JSONDecodeError, TypeError):
+            records = []
+        trade_date = str(record.get("trade_date") or record.get("date") or "")
+        records = [r for r in records if isinstance(r, dict) and
+                   str(r.get("trade_date") or r.get("date") or "") != trade_date]
+        records.append({k: record.get(k) for k in (
+            "date", "trade_date", "sh_flow", "sz_flow", "total_flow",
+            "available", "collection_mode", "source", "reason", "stale"
+        )})
+        try:
+            self.cache_path.write_text(
+                json.dumps(records[-30:], ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError:
+            # Cache persistence is best effort; a live observation must still
+            # be returned when the runner filesystem is read-only.
+            return
 
     def _get_json(self, path, params):
         """按 host 列表依次尝试，第一个成功返回 JSON 的即用。全挂则抛最后一个异常。"""
@@ -76,10 +140,15 @@ class MoneyFlowScraper:
                 result = fetcher(target)
                 if result and result.get("available"):
                     result["attempted_sources"] = [source]
+                    self._save_cached_north(result)
                     return result
                 errors.append(f"{source}:未返回有效盘后数据")
             except Exception as exc:
                 errors.append(f"{source}:{type(exc).__name__}")
+        cached = self._load_cached_north(target)
+        if cached:
+            cached["attempted_sources"] = ["eastmoney", "10jqka", "cache"]
+            return cached
         return self._empty_north_flow(
             "；".join(errors) or "东方财富和同花顺均未返回有效盘后数据"
         )
@@ -114,8 +183,12 @@ class MoneyFlowScraper:
         index = next((i for i, value in enumerate(dates) if str(value) == target_date), None)
         if index is None:
             raise ValueError("同花顺盘后记录日期不匹配")
-        sh = self._num((daily.get("h") or [])[index]) / 100000000
-        total = self._num((daily.get("total") or [])[index]) / 100000000
+        sh = self._optional_num((daily.get("h") or [])[index])
+        total = self._optional_num((daily.get("total") or [])[index])
+        if sh is None or total is None:
+            raise ValueError("同花顺盘后数据不是有限数值")
+        sh /= 100000000
+        total /= 100000000
         sz = total - sh
         if not all(math.isfinite(value) for value in (sh, sz, total)):
             raise ValueError("同花顺盘后数据不是有限数值")
@@ -156,17 +229,36 @@ class MoneyFlowScraper:
         Returns:
             dict: 行业资金流向数据
         """
+        today = datetime.now().strftime("%Y-%m-%d")
+        inflow = []
+        outflow = []
+        errors = []
         try:
             inflow = self._clist('m:90+t:2', top_n)
-            outflow = self._clist('m:90+t:2', top_n, ascending=True)
-            return {
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "top_inflow": [self._shape_flow(x) for x in inflow[:top_n]],
-                "top_outflow": [self._shape_flow(x) for x in outflow[:top_n]],
-            }
         except Exception as e:
-            print(f"     [WARN] 行业资金流向获取失败: {e}")
-            return self._empty_sector_flow()
+            errors.append(f"inflow: {e}")
+        try:
+            outflow = self._clist('m:90+t:2', top_n, ascending=True)
+        except Exception as e:
+            errors.append(f"outflow: {e}")
+        if errors:
+            print(f"     [WARN] 行业资金流向部分失败: {'; '.join(errors)}")
+        valid_inflow = self._valid_rank_rows(inflow[:top_n])
+        valid_outflow = self._valid_rank_rows(outflow[:top_n])
+        available = bool(valid_inflow or valid_outflow)
+        reason = ""
+        if (inflow or outflow) and not available:
+            reason = "东方财富返回盘前占位或无效行业资金数据"
+        elif not available:
+            reason = "; ".join(errors) or "行业资金数据暂不可用"
+        return {
+            "date": today,
+            "top_inflow": [self._shape_flow(x) for x in valid_inflow],
+            "top_outflow": [self._shape_flow(x) for x in valid_outflow],
+            "available": available,
+            "error": "; ".join(errors),
+            "reason": reason,
+        }
 
     def fetch_stock_flow(self, top_n=10):
         """
@@ -182,20 +274,55 @@ class MoneyFlowScraper:
         try:
             inflow = self._clist(fs, top_n)
             outflow = self._clist(fs, top_n, ascending=True)
+            valid_inflow = self._valid_rank_rows(inflow[:top_n])
+            valid_outflow = self._valid_rank_rows(outflow[:top_n])
+            available = bool(valid_inflow or valid_outflow)
             return {
                 "date": datetime.now().strftime("%Y-%m-%d"),
-                "top_inflow": [self._shape_flow(x, with_code=True) for x in inflow[:top_n]],
-                "top_outflow": [self._shape_flow(x, with_code=True) for x in outflow[:top_n]],
+                "top_inflow": [self._shape_flow(x, with_code=True) for x in valid_inflow],
+                "top_outflow": [self._shape_flow(x, with_code=True) for x in valid_outflow],
+                "available": available,
+                "reason": "" if available else "东方财富返回盘前占位或无效个股资金数据",
             }
         except Exception as e:
             print(f"     [WARN] 个股资金流向获取失败: {e}")
             return self._empty_stock_flow()
 
     @staticmethod
-    def _num(value):
-        """东财在停牌/无数据时会返回 '-'，统一转成 0。"""
+    def _optional_num(value):
+        """Parse a required Eastmoney numeric field without inventing zero."""
         try:
-            return float(value)
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if math.isfinite(parsed) else None
+
+    @classmethod
+    def _valid_rank_rows(cls, rows):
+        """Drop pre-open placeholders and malformed ranking rows."""
+        valid = []
+        for item in rows:
+            if not isinstance(item, dict) or not str(item.get('f14') or '').strip():
+                continue
+            values = [cls._optional_num(item.get(field)) for field in ('f62', 'f3', 'f184')]
+            if any(value is None for value in values):
+                continue
+            valid.append(item)
+        # A whole ranking whose market fields are all zero is Eastmoney's
+        # pre-open placeholder response, not an observed zero-flow market.
+        if valid and not any(
+            cls._optional_num(item.get(field)) != 0
+            for item in valid for field in ('f62', 'f3', 'f184')
+        ):
+            return []
+        return valid
+
+    @staticmethod
+    def _num(value):
+        """Parse optional numeric values used by legacy response shapes."""
+        try:
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else 0.0
         except (TypeError, ValueError):
             return 0.0
 

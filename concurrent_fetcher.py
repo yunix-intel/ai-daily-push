@@ -56,14 +56,14 @@ class ConcurrentFetcher:
                     items = future.result(timeout=remaining)
                     if items:
                         results.extend(items)
-                        print(f"     ✓ {name}: {len(items)} 条")
+                        print(f"     [OK] {name}: {len(items)} 条")
                 except TimeoutError:
                     if deadline_at:
                         print(f"     [TIMEOUT] {name}: fetch deadline reached")
                         break
-                    print(f"     ✗ {name}: 请求超时")
+                    print(f"     [TIMEOUT] {name}: 请求超时")
                 except Exception as e:
-                    print(f"     ✗ {name}: {e}")
+                    print(f"     [ERROR] {name}: {e}")
         finally:
             for pending in futures:
                 pending.cancel()
@@ -86,7 +86,7 @@ class ConcurrentFetcher:
         """
         last_error = None
 
-        for attempt in range(self.max_retries):
+        for attempt in range(self.max_retries + 1):
             try:
                 return fetch_func(name, url, limit)
             except urllib.error.HTTPError as e:
@@ -95,11 +95,11 @@ class ConcurrentFetcher:
                     # 不可恢复的错误，不重试
                     break
                 # 可恢复的错误，重试
-                if attempt < self.max_retries - 1:
+                if attempt < self.max_retries:
                     time.sleep(2 ** attempt)  # 指数退避
             except urllib.error.URLError as e:
                 last_error = e
-                if attempt < self.max_retries - 1:
+                if attempt < self.max_retries:
                     time.sleep(2 ** attempt)
             except Exception as e:
                 last_error = e
@@ -152,12 +152,12 @@ class ConcurrentFetcher:
         """通用的带重试抓取"""
         last_error = None
 
-        for attempt in range(self.max_retries):
+        for attempt in range(self.max_retries + 1):
             try:
                 return fetch_func(url)
             except Exception as e:
                 last_error = e
-                if attempt < self.max_retries - 1:
+                if attempt < self.max_retries:
                     time.sleep(2 ** attempt)
 
         raise last_error or Exception(f"Failed to fetch {url}")

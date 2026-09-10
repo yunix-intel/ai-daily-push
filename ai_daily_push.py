@@ -31,8 +31,9 @@ import json, sys, os, re, html, time, threading, urllib.parse, urllib.request, u
 
 _DEEPSEEK_MAX_CONCURRENCY = max(1, int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "2")))
 _DEEPSEEK_SEMAPHORE = threading.BoundedSemaphore(_DEEPSEEK_MAX_CONCURRENCY)
-_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "1")))
-_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "120")))
+# Keep the default job budget bounded: callers can opt into slower retries via env.
+_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "0")))
+_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "15")))
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
@@ -105,6 +106,41 @@ def fetch_daily(date_str):
     data2 = http_get(f"{BASE}/dailies/{d2}")
     return data2, d2, True
 
+
+def _parse_history_time(value):
+    """Parse a history timestamp as UTC, returning None for invalid values."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _latest_history_boundary(history_data, before):
+    """Return the latest valid delivery boundary from current or legacy history."""
+    if isinstance(history_data, list):
+        records = history_data
+    elif isinstance(history_data, dict):
+        records = history_data.get("records") if isinstance(history_data.get("records"), list) else [history_data]
+    else:
+        return None
+
+    candidates = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        raw = next((record.get(field) for field in (
+            "delivery_completed_at", "lastPushTime", "timestamp", "pipeline_completed_at"
+        ) if record.get(field)), None)
+        parsed = _parse_history_time(raw)
+        if parsed is not None and parsed < before:
+            candidates.append(parsed)
+    return max(candidates, default=None)
+
 # ----------------------------- 多来源聚合 -----------------------------
 RSS_FEEDS = [
     ("VentureBeat AI", "https://venturebeat.com/category/ai/feed/"),
@@ -125,15 +161,24 @@ def fetch_rss(source_name, url, limit=8):
             for name in names:
                 node = entry.find(name)
                 if node is not None and node.text:
-                    return re.sub(r"<[^>]+>", " ", node.text).strip()
+                    value = html.unescape(node.text)
+                    value = re.sub(r"<[^>]+>", " ", value)
+                    return re.sub(r"\s+", " ", value).strip()
             return ""
         link = text("link", "{http://www.w3.org/2005/Atom}link")
         atom_link = entry.find("{http://www.w3.org/2005/Atom}link")
         if atom_link is not None:
             link = atom_link.get("href", link)
+        summary = text(
+            "description", "summary",
+            "{http://www.w3.org/2005/Atom}summary",
+            "{http://www.w3.org/2005/Atom}content",
+            "{http://purl.org/rss/1.0/modules/content/}encoded",
+        )
         result.append({
             "title": text("title", "{http://www.w3.org/2005/Atom}title"),
-            "summary": text("description", "summary", "{http://www.w3.org/2005/Atom}summary"),
+            "summary": summary,
+            "summary_status": "available" if summary else "source_empty",
             "link": link,
             "source": source_name,
             # 财经日报要按「过去 24 小时」过滤，这里一并取出发布时间；AI 日报不读这个字段。
@@ -232,7 +277,7 @@ def aggregate_sources(primary):
         except Exception as exc:
             return source_name, [], exc
 
-    with ThreadPoolExecutor(max_workers=min(4, len(RSS_FEEDS)), thread_name_prefix="ai-rss") as executor:
+    with ThreadPoolExecutor(max_workers=max(1, min(4, len(RSS_FEEDS))), thread_name_prefix="ai-rss") as executor:
         fetched = list(executor.map(fetch_one, RSS_FEEDS))
 
     for source_name, source_items, error in fetched:
@@ -245,10 +290,17 @@ def aggregate_sources(primary):
                 seen.add(key)
                 all_items.append({
                     "title": item["title"], "summary": item["summary"],
+                    "summaryStatus": item.get("summary_status", "available"),
                     "source": {"name": item["source"]},
                     "links": {"original": item["link"], "aihot": item["link"]}
                 })
         print(f"     {source_name}：抓取 {len(source_items)} 条")
+
+    source_empty_count = sum(
+        item.get("summaryStatus") == "source_empty" for item in all_items
+    )
+    if source_empty_count:
+        print(f"     [INFO] 上游未提供摘要：{source_empty_count} 条（不计入翻译失败）")
 
     # 统一智能分类
     sections = classify_ai_items(all_items)
@@ -275,17 +327,15 @@ def aggregate_sources(primary):
         if os.path.exists(history_file):
             with open(history_file, 'r', encoding='utf-8') as f:
                 history_data = json.load(f)
-                last_push_str = history_data.get('lastPushTime')
-                if last_push_str:
-                    from dateutil.parser import parse
-                    last_push_time = parse(last_push_str)
-                    # 使用上次推送时间作为窗口开始（更准确）
-                    window_start = last_push_time
+            last_push_time = _latest_history_boundary(history_data, window_end)
+            if last_push_time:
+                # History timestamps are real delivery boundaries. Never allow a
+                # delayed run to push the next collection window beyond its cron anchor.
+                window_start = min(last_push_time, window_end)
 
-                    # 计算跨越天数
-                    days_span = (window_end - window_start).total_seconds() / 86400
-                    if days_span > 1.5:  # 超过1.5天视为跨天
-                        print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
+                days_span = (window_end - window_start).total_seconds() / 86400
+                if days_span > 1.5:
+                    print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
     except Exception as e:
         print(f"     [WARN] 无法读取上次推送时间，使用默认24小时窗口：{e}")
 
@@ -547,7 +597,7 @@ def translate_items(report, give_up_after=6):
         pairs = [(i, all_items[i].get("title", ""), all_items[i].get("summary", ""))
                  for i in pending]
         mapping = translate_batch_llm_ai(pairs)
-        done = 0
+        completed = set()
         for i, (title_zh, summary_zh) in mapping.items():
             if i not in pending:
                 continue
@@ -556,8 +606,9 @@ def translate_items(report, give_up_after=6):
                 item["title"] = title_zh
             if summary_zh:
                 item["summary"] = summary_zh
-            if title_zh or summary_zh:
-                done += 1
+            if not (_needs_translation(item.get("title"))
+                    or _needs_translation(item.get("summary"))):
+                completed.add(i)
         leftover = [i for i in pending
                     if _needs_translation(all_items[i].get("title"))
                     or _needs_translation(all_items[i].get("summary"))]
@@ -571,8 +622,10 @@ def translate_items(report, give_up_after=6):
                     item["title"] = title_zh
                 if summary_zh:
                     item["summary"] = summary_zh
-                done += 1
-        print(f"     LLM 翻译完成：{done}/{len(pending)} 条")
+                if not (_needs_translation(item.get("title"))
+                        or _needs_translation(item.get("summary"))):
+                    completed.add(i)
+        print(f"     LLM 翻译完成：{len(completed)}/{len(pending)} 条")
         # 补翻之后仍是英文的条目，交给免费接口兜底。
         # 之前只要 done>0 就直接 return，网关部分 504 时
         # （例如 21/31 成功）剩下的 10 条会原样以英文出现在页面上。
@@ -581,12 +634,13 @@ def translate_items(report, give_up_after=6):
                     or _needs_translation(all_items[i].get("summary"))]
         if not still_en:
             return report
-        if done:
-            print(f"     [!] 仍有 {len(still_en)} 条为英文，改用免费接口兜底")
-            pending = still_en
-        else:
-            # 网关整体不可用（key 失效/网关下线）才整批落到免费接口
-            print("     [!] LLM 翻译全部失败，回退免费接口逐条翻译")
+        if completed:
+            print(f"     [!] 仍有 {len(still_en)} 条为英文，保留原文；本次不再调用免费接口")
+            return report
+        # 网关整体不可用时也保留原文。逐条 MyMemory 最坏会产生数十个
+        # 20 秒请求，曾让 --no-push 在五分钟外层门禁内无法结束。
+        print("     [!] LLM 翻译全部失败，保留英文原文")
+        return report
 
     translated, failed, consecutive_fail = 0, 0, 0
     gave_up = False
@@ -1027,6 +1081,17 @@ def _format_trend_cards(trends, start_idx=1):
                  f"第 {m.get('from_rank')} 名 → 第 {m.get('to_rank')} 名（对比 {base}）",
                  "OpenRouter 榜单变化")
 
+    history_status = trends.get("history_status")
+    if history_status == "missing":
+        _add("历史趋势待建立",
+             trends.get("note") or "最近 7 天没有可用的 OpenRouter 历史快照。",
+             "OpenRouter 历史状态")
+    elif history_status == "restored" and not cards:
+        compared_with = trends.get("compared_with") or rt.get("compared_with") or "上一快照"
+        _add("历史快照已恢复，本次无变化",
+             f"已读取 {trends.get('history_count', 0)} 份历史快照；最近对比日期：{compared_with}。",
+             "OpenRouter 历史状态")
+
     return cards
 
 
@@ -1081,6 +1146,7 @@ def shape(report, market_insights=None, news_metrics=None):
                 "originalTitle": original_title,
                 "summary": it.get("summary", ""),
                 "originalSummary": it.get("originalSummary", it.get("summary", "")),
+                "summaryStatus": it.get("summaryStatus", "available" if it.get("summary") else "source_empty"),
                 "source": it.get("source", {}).get("name", ""),
                 "original": original_link,
                 "aihot": it.get("links", {}).get("aihot", ""),
@@ -1118,6 +1184,10 @@ def shape(report, market_insights=None, news_metrics=None):
         "windowEnd": report.get("windowEnd", ""),
         "generatedAt": report.get("generatedAt", ""),
         "total": gi,
+        "sourceEmptyCount": sum(
+            entry.get("summaryStatus") == "source_empty"
+            for entry, _label in flat_for_ranking
+        ),
         "source": report.get("attribution", {}),
         "dailyUrl": report.get("links", {}).get("aihot", ""),
     }
@@ -1234,6 +1304,7 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   document.getElementById('heroDate').textContent=fmtBeijing(meta.date+'T00:00:00+08:00',{year:'numeric',month:'long',day:'numeric',weekday:'long'})+'（北京时间）';
   document.getElementById('heroWindow').textContent='收录窗口：'+fmtBeijing(meta.windowStart,{month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})+' — '+fmtBeijing(meta.windowEnd,{month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})+'（北京时间）';
   let st='<div class="stat total"><div class="num">'+meta.total+'</div><div class="lbl">总条数</div></div>';
+  if(meta.sourceEmptyCount){st+='<div class="stat"><div class="num">'+meta.sourceEmptyCount+'</div><div class="lbl">上游未提供摘要</div></div>';}
   sections.forEach(s=>{st+='<div class="stat"><div class="num">'+s.items.length+'</div><div class="lbl">'+esc(s.label)+'</div></div>';});
   document.getElementById('heroStats').innerHTML=st;
   const highlights=DATA.highlights||[];
@@ -1379,7 +1450,8 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     s.items.forEach(it=>{const orig=safeUrl(it.original||it.aihot||'#');const tl=safeUrl(it.aihot||it.original||'#');const tp=safeUrl(it.translatedPage||'');
       main+='<article class="card"><div class="top"><span class="idx">'+it.idx+'</span><span class="chip" title="'+esc(it.source)+'">'+esc(it.source)+'</span></div>';
       main+='<h3><a href="'+esc(tl)+'" target="_blank" rel="noopener noreferrer">'+esc(it.title)+'</a></h3>';
-      main+='<p class="summary">'+esc(truncate(it.summary,120))+'</p>';
+      const summary=it.summaryStatus==='source_empty'?'上游未提供摘要，请查看原文。':truncate(it.summary,120);
+      main+='<p class="summary">'+esc(summary)+'</p>';
       if(it.originalTitle!==it.title||it.originalSummary!==it.summary) main+='<p class="original-text"><b>原文</b><br>'+esc(truncate(it.originalTitle,120))+'<br>'+esc(truncate(it.originalSummary,260))+'</p>';
       main+='<div class="foot"><span class="src">'+esc(it.source)+'</span><span class="linkgroup">'+(tp&&tp!=='#'?'<a class="orig" href="'+esc(tp)+'" target="_blank" rel="noopener noreferrer">翻译全文 ↗</a>':'')+'<a class="orig" href="'+esc(orig)+'" target="_blank" rel="noopener noreferrer">阅读原文 ↗</a></span></div></article>';});
     main+='</div></section>';});
@@ -1653,7 +1725,11 @@ def main():
                 trends = TrendAnalyzer().analyze_trends(aggregated, days_back=7)
                 trend_cards = _format_trend_cards(trends, start_idx=len(market_insights) + 1)
                 market_insights.extend(trend_cards)
-                print(f"     ✓ 趋势分析：{len(trend_cards)} 条"
+                history_status = trends.get("history_status", "unknown")
+                history_count = trends.get("history_count", 0)
+                compared_with = trends.get("compared_with", "") or "无"
+                print(f"     ✓ 趋势分析：{len(trend_cards)} 条；"
+                      f"历史状态={history_status}，快照={history_count}，最近对比={compared_with}"
                       + (f"（{trends.get('note')}）" if trends.get('note') else ""))
             except Exception as e:
                 print(f"     [WARN] 趋势分析失败，跳过：{e}")
@@ -1738,17 +1814,28 @@ def main():
     # 渠道优先级：企业微信群机器人 > 飞书群机器人 > 企业微信应用消息 > pushplus
     webhook = (os.environ.get("WECOM_WEBHOOK") or cfg.get("wecom_webhook", "")).strip()
     feishu_webhook = (os.environ.get("FEISHU_WEBHOOK") or cfg.get("feishu_webhook", "")).strip()
+    delivery_status_path = os.environ.get("DELIVERY_STATUS_FILE", "").strip()
+    wecom_channel = "wecom_webhook" if webhook else (
+        "wecom_application" if corpid and corpsecret and agentid else "none"
+    )
+    delivery_succeeded = False
+    delivery_attempted = False
+    delivery_failure = "not_configured"
 
     if webhook:
+        delivery_attempted = True
         print("[4/4] 推送到企业微信群机器人（-> 个人微信）...")
         title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         try:
             resp = push_wecom_webhook(webhook, md, dashboard_url, title_prefix=title)
             print("     企业微信返回：", resp)
-            failed = [r for r in resp if isinstance(r, dict) and r.get("errcode", 0) != 0]
+            failed = [r for r in resp if not isinstance(r, dict) or r.get("errcode", 0) != 0]
+            delivery_succeeded = bool(resp) and not failed
+            delivery_failure = "" if delivery_succeeded else "api_rejected"
             if failed:
                 print("     ⚠️ 推送失败：", failed)
         except Exception as e:
+            delivery_failure = f"exception:{type(e).__name__}"
             print("     ⚠️ 企业微信群机器人推送异常：", repr(e))
 
     elif feishu_webhook:
@@ -1763,13 +1850,17 @@ def main():
             print("     ⚠️ 飞书推送异常：", repr(e))
 
     elif corpid and corpsecret and agentid:
+        delivery_attempted = True
         print("[4/4] 推送到企业微信（应用消息 -> 个人微信）...")
         try:
             resp = push_wecom(corpid, corpsecret, agentid, touser, md)
             print("     企业微信返回：", resp)
-            if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
-                print("     ⚠️ 推送失败：", resp.get("errmsg"), resp)
+            delivery_succeeded = isinstance(resp, dict) and resp.get("errcode", 0) == 0
+            delivery_failure = "" if delivery_succeeded else "api_rejected"
+            if not delivery_succeeded:
+                print("     ⚠️ 推送失败：", resp.get("errmsg") if isinstance(resp, dict) else "invalid response", resp)
         except Exception as e:
+            delivery_failure = f"exception:{type(e).__name__}"
             print("     ⚠️ 企业微信推送异常：", repr(e))
 
     elif token:
@@ -1781,6 +1872,17 @@ def main():
             print("     ⚠️ 推送可能失败，请检查返回信息。")
     else:
         print("[4/4] 未配置任何推送渠道（企业微信 WECOM_CORPID/SECRET/AGENTID 或 pushplus PUSHPLUS_TOKEN），跳过推送。")
+
+    if delivery_status_path:
+        from delivery_status import write_delivery_status
+        write_delivery_status(
+            delivery_status_path, "ai", wecom_channel,
+            wecom_channel != "none", delivery_attempted, delivery_succeeded,
+            completed_at=datetime.now(timezone.utc) if delivery_succeeded else None,
+            reason=delivery_failure,
+        )
+        if not delivery_succeeded:
+            raise RuntimeError(f"企业微信日报推送未成功: {delivery_failure}")
 
     # 微信公众号发布（独立于推送渠道）
     wechat_cfg = cfg.get("wechat_official", {}) or {}

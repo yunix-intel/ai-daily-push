@@ -219,7 +219,7 @@ python ai_daily_push.py --no-push
   - GitHub Secrets（推荐，用于 GitHub Actions）
   - 本地 `push_config.json`（已在 .gitignore 中，不会提交到仓库）
   - 环境变量
-- 日志系统自动脱敏 API Key，只记录前缀（如 `sk-1234...`）
+- 日志系统自动脱敏 API Key，只记录前缀（如 `sk-REDACTED`）
 - 生成的 HTML 仪表盘不包含任何敏感信息
 
 ### 数据传输

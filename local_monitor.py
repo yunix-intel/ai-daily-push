@@ -11,7 +11,7 @@
    - 创建基本任务
    - 触发器：每天 08:10
    - 操作：启动程序 python.exe
-   - 参数：D:\c\ai-daily-push\local_monitor.py
+   - 参数：D:\\c\\ai-daily-push\\local_monitor.py
 
 2. Linux/Mac cron：
    10 8 * * * cd /path/to/ai-daily-push && python3 local_monitor.py
@@ -106,7 +106,7 @@ def check_github_actions():
                     today_runs.append(run)
 
         if not today_runs:
-            print("⚠️  今天还没有运行记录")
+            print("[WARNING] 今天还没有运行记录")
             send_alert(
                 "WARNING",
                 "GitHub Actions 未运行",
@@ -146,7 +146,7 @@ def check_github_actions():
 
             # 检查延迟
             if delay_seconds > threshold:
-                print(f"❌ 延迟超过阈值 {threshold} 秒")
+                print(f"[ERROR] 延迟超过阈值 {threshold} 秒")
                 send_alert(
                     "ERROR",
                     "GitHub Actions 推送延迟",
@@ -165,7 +165,7 @@ def check_github_actions():
 
             # 检查运行状态
             if conclusion != "success":
-                print(f"❌ 运行失败: {conclusion}")
+                print(f"[ERROR] 运行失败: {conclusion}")
                 send_alert(
                     "ERROR",
                     "GitHub Actions 运行失败",
@@ -179,7 +179,7 @@ def check_github_actions():
                 )
                 return False
 
-            print("✅ 运行正常")
+            print("[OK] 运行正常")
             return True
 
     except Exception as e:
@@ -220,9 +220,9 @@ def main():
     print()
     print("="*70)
     if success:
-        print("✅ 监测完成，一切正常")
+        print("[OK] 监测完成，一切正常")
     else:
-        print("⚠️  监测完成，发现问题")
+        print("[WARNING] 监测完成，发现问题")
     print("="*70)
 
     return 0 if success else 1

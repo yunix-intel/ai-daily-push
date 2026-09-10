@@ -13,8 +13,8 @@ import urllib.request
 
 _DEEPSEEK_MAX_CONCURRENCY = max(1, int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "2")))
 _ANALYSIS_MAX_CONCURRENCY = max(1, int(os.getenv("ANALYSIS_MAX_CONCURRENCY", "8")))
-_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "2")))
-_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "180")))
+_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "0")))
+_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "15")))
 _DEEPSEEK_SEMAPHORE = threading.BoundedSemaphore(_DEEPSEEK_MAX_CONCURRENCY)
 _ANALYSIS_SEMAPHORE = threading.BoundedSemaphore(_ANALYSIS_MAX_CONCURRENCY)
 

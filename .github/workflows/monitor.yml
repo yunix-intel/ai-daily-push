@@ -33,12 +33,14 @@ jobs:
           python github_monitor.py \
             --repo "${{ github.repository }}" \
             --workflow "每日推送：AI 日报 + 财经日报（企业微信 + GitHub Pages）" \
+            --expected-time "23:00" \
             --check-delay \
             --threshold 900
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ALERT_WECOM_WEBHOOK: ${{ secrets.ALERT_WECOM_WEBHOOK }}
           ALERT_DINGTALK_WEBHOOK: ${{ secrets.ALERT_DINGTALK_WEBHOOK }}
+          ALERT_DINGTALK_SECRET: ${{ secrets.ALERT_DINGTALK_SECRET }}
           ALERT_FEISHU_WEBHOOK: ${{ secrets.ALERT_FEISHU_WEBHOOK }}
 
       - name: Monitor result

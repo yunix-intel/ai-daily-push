@@ -1,0 +1,26 @@
+[run]
+branch = True
+source =
+    .
+omit =
+    */.claude/*
+    */.verify_pages/*
+    */htmlcov/*
+    */__pycache__/*
+    */tests/*
+    */test_*.py
+    */legacy_*
+    */comprehensive_test.py
+    */enterprise_test.py
+    */performance_test.py
+    */run_tests.py
+    */_probe.py
+    */_export_session.py
+
+[report]
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    def test_

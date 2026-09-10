@@ -45,14 +45,18 @@ jobs:
         uses: actions/cache@v5
         with:
           path: data/market_data
-          key: ai-market-data-${{ github.run_id }}
-          restore-keys: market-data-
-      - name: 恢复全文翻译缓存
+          key: ai-market-data-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ai-market-data-${{ github.ref_name }}-
+            ai-market-data-
+      - name: 恢复 AI 翻译缓存
         uses: actions/cache@v5
         with:
           path: translations
-          key: ai-translations-${{ github.run_id }}
-          restore-keys: translations-
+          key: ai-translations-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ai-translations-${{ github.ref_name }}-
+            ai-translations-
       - name: AI 日报
         env:
           WECOM_CORPID: ${{ secrets.WECOM_CORPID }}
@@ -68,6 +72,7 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
+          DELIVERY_STATUS_FILE: ai_delivery_status.json
         run: python -u ai_daily_push.py
       - name: 上传 AI 页面和状态
         if: always()
@@ -76,6 +81,7 @@ jobs:
           name: ai-daily-output
           path: |
             ai_daily_dashboard.html
+            ai_delivery_status.json
             translations
           if-no-files-found: warn
 
@@ -91,12 +97,22 @@ jobs:
           python-version: '3.11'
       - name: 安装 Python 依赖
         run: python -m pip install --disable-pip-version-check -r requirements.txt
-      - name: 恢复全文翻译缓存
+      - name: 恢复财经资金流向缓存
+        uses: actions/cache@v5
+        with:
+          path: data/market_data/money_flow_north.json
+          key: finance-money-flow-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            finance-money-flow-${{ github.ref_name }}-
+            finance-money-flow-
+      - name: 恢复财经翻译缓存
         uses: actions/cache@v5
         with:
           path: translations
-          key: finance-translations-${{ github.run_id }}
-          restore-keys: translations-
+          key: finance-translations-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            finance-translations-${{ github.ref_name }}-
+            finance-translations-
       - name: 财经日报
         env:
           WECOM_WEBHOOK: ${{ secrets.FINANCE_WECOM_WEBHOOK || secrets.WECOM_WEBHOOK }}
@@ -104,17 +120,21 @@ jobs:
           FINANCE_DASHBOARD_URL: ${{ secrets.FINANCE_DASHBOARD_URL }}
           WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
           WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
+          DELIVERY_STATUS_FILE: finance_delivery_status.json
         run: python -u finance_daily_push.py
       - name: 上传财经页面和状态
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: finance-daily-output
-          path: finance_dashboard.html
+          path: |
+            finance_dashboard.html
+            finance_delivery_status.json
           if-no-files-found: warn
 
   publish:
@@ -142,9 +162,32 @@ jobs:
           echo "Finance job result: ${{ needs['finance-daily'].result }}"
           if [ "${{ needs['ai-daily'].result }}" != "success" ]; then echo "::warning::AI 日报 job 未成功"; fi
           if [ "${{ needs['finance-daily'].result }}" != "success" ]; then echo "::warning::财经日报 job 未成功"; fi
+      - name: 读取当前运行里程碑
+        id: milestones
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const run = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            // GitHub exposes runner start on the run; event creation is not
+            // available as a trustworthy timestamp in this job context.
+            core.setOutput('runner_started_at', run.data.run_started_at || '');
       - name: 记录推送时间
-        if: always()
-        run: python push_history_recorder.py --expected-time "23:00" --task "AI Daily Push"
+        env:
+          EVENT_CREATED_AT: ""
+          RUNNER_STARTED_AT: ${{ steps.milestones.outputs.runner_started_at }}
+        run: |
+          python push_history_recorder.py \
+            --expected-time "23:00" \
+            --task "AI + Finance Daily Push" \
+            --delivery-status ai-output/ai_delivery_status.json \
+            --delivery-status finance-output/finance_delivery_status.json \
+            --event-created-at "$EVENT_CREATED_AT" \
+            --runner-started-at "$RUNNER_STARTED_AT"
       - name: 提交推送历史
         continue-on-error: true
         run: |

@@ -73,13 +73,13 @@ class ConfigValidator:
             self.errors.append("未配置任何推送渠道（企业微信/PushPlus/钉钉/飞书）")
         else:
             if wecom_corpid and wecom_secret and wecom_agentid:
-                print("  ✓ 企业微信配置已设置")
+                print("  [OK] 企业微信配置已设置")
             if pushplus_token:
-                print("  ✓ PushPlus 配置已设置")
+                print("  [OK] PushPlus 配置已设置")
             if dingtalk_webhook:
-                print("  ✓ 钉钉配置已设置")
+                print("  [OK] 钉钉配置已设置")
             if feishu_webhook:
-                print("  ✓ 飞书配置已设置")
+                print("  [OK] 飞书配置已设置")
 
     def _validate_llm_config(self):
         """验证 LLM 配置"""
@@ -89,13 +89,13 @@ class ConfigValidator:
         if not api_key:
             self.warnings.append("未配置 OPENAI_API_KEY，LLM 功能将不可用")
         else:
-            print(f"  ✓ LLM API Key 已设置（前4位: {api_key[:4]}...）")
+            print(f"  [OK] LLM API Key 已设置（前4位: {api_key[:4]}...）")
 
             # 验证 API Key 格式
             if not api_key.startswith("sk-"):
                 self.warnings.append("API Key 格式可能不正确（应以 sk- 开头）")
 
-        print(f"  ✓ LLM Base URL: {base_url}")
+        print(f"  [OK] LLM Base URL: {base_url}")
 
     def _validate_file_permissions(self):
         """验证文件权限"""
@@ -107,7 +107,7 @@ class ConfigValidator:
             with open(test_file, 'w') as f:
                 f.write("test")
             os.remove(test_file)
-            print("  ✓ 当前目录可写")
+            print("  [OK] 当前目录可写")
         except Exception as e:
             self.errors.append(f"当前目录不可写: {e}")
 
@@ -117,7 +117,7 @@ class ConfigValidator:
             if not os.path.exists(d):
                 try:
                     os.makedirs(d, exist_ok=True)
-                    print(f"  ✓ 创建目录: {d}")
+                    print(f"  [OK] 创建目录: {d}")
                 except Exception as e:
                     self.errors.append(f"无法创建目录 {d}: {e}")
 
@@ -135,7 +135,7 @@ class ConfigValidator:
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
                 urllib.request.urlopen(req, timeout=5)
-                print(f"  ✓ {name} 可访问")
+                print(f"  [OK] {name} 可访问")
             except urllib.error.URLError as e:
                 self.warnings.append(f"{name} 不可访问: {e}")
             except Exception as e:
@@ -155,7 +155,7 @@ class ConfigValidator:
             if "pushplus_token" not in config and "wecom" not in config:
                 self.warnings.append("配置文件中缺少推送配置")
 
-            print(f"  ✓ 配置文件 {config_path} 格式正确")
+            print(f"  [OK] 配置文件 {config_path} 格式正确")
             return True
 
         except json.JSONDecodeError as e:
@@ -172,17 +172,17 @@ class ConfigValidator:
         print("="*60)
 
         if self.errors:
-            print(f"\n❌ 错误 ({len(self.errors)}):")
+            print(f"\n[ERROR] 错误 ({len(self.errors)}):")
             for i, error in enumerate(self.errors, 1):
                 print(f"  {i}. {error}")
 
         if self.warnings:
-            print(f"\n⚠️  警告 ({len(self.warnings)}):")
+            print(f"\n[WARNING]  警告 ({len(self.warnings)}):")
             for i, warning in enumerate(self.warnings, 1):
                 print(f"  {i}. {warning}")
 
         if not self.errors and not self.warnings:
-            print("\n✓ 所有检查通过！")
+            print("\n[OK] 所有检查通过！")
 
         print("="*60 + "\n")
 
@@ -212,14 +212,14 @@ def validate_environment() -> bool:
     validator.print_report()
 
     if not passed:
-        print("❌ 配置验证失败，请修复上述错误后重试")
+        print("[ERROR] 配置验证失败，请修复上述错误后重试")
         return False
 
     if warnings:
-        print("⚠️  配置验证通过，但存在警告")
+        print("[WARNING]  配置验证通过，但存在警告")
         return True
 
-    print("✓ 配置验证完全通过")
+    print("[OK] 配置验证完全通过")
     return True
 
 

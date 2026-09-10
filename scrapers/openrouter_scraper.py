@@ -8,6 +8,7 @@ import re
 import json
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 from bs4 import BeautifulSoup
 from .base_scraper import BaseScraper
 
@@ -258,12 +259,12 @@ class OpenRouterScraper(BaseScraper):
 
         try:
             # 查找页面描述
-            desc_elem = soup.find(text=re.compile(r"Live LLM rankings"))
+            desc_elem = soup.find(string=re.compile(r"Live LLM rankings"))
             if desc_elem:
                 result['description'] = desc_elem.strip()
 
             # 查找日期信息
-            date_elem = soup.find(text=re.compile(r"Usage data through"))
+            date_elem = soup.find(string=re.compile(r"Usage data through"))
             if date_elem:
                 match = re.search(r"through\s+([A-Za-z]+\s+\d+,\s+\d{4})", date_elem)
                 if match:

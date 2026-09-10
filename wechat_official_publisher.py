@@ -328,8 +328,13 @@ def publish_to_wechat_official(title, author, digest, content, thumb_image_path,
             content_source_url=content_source_url
         )
 
-        print(f"  ✓ 微信公众号发布成功")
-        print(f"    publish_id: {result.get('publish_id')}")
+        publish_id = result.get('publish_id') if isinstance(result, dict) else None
+        if not publish_id:
+            print("  [!] 微信公众号发布失败: 未返回有效 publish_id")
+            return False
+
+        print(f"  [OK] 微信公众号发布成功")
+        print(f"    publish_id: {publish_id}")
         print(f"    msg_data_id: {result.get('msg_data_id')}")
 
         return True

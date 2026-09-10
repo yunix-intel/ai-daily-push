@@ -228,6 +228,41 @@ def classify_by_keywords(item: Dict) -> Literal['domestic', 'international']:
     return 'domestic'
 
 
+def deterministic_importance_score(item: Dict) -> int:
+    """Score one item without an LLM, using stable market-impact evidence."""
+    title = str(item.get('title', ''))
+    summary = str(item.get('summary', ''))
+    text = f"{title} {summary}".lower()
+    score = 4
+
+    high_impact = (
+        '降息', '加息', '降准', '重大政策', '监管', '制裁', '战争', '违约',
+        '破产', '暴跌', '暴涨', '熔断', '停牌', '调查', '并购', '收购',
+        'rate cut', 'rate hike', 'sanction', 'war', 'default', 'bankruptcy',
+    )
+    medium_impact = (
+        '财报', '业绩', '通胀', 'gdp', 'cpi', 'ppi', '就业', '失业率',
+        '融资', 'ipo', '订单', '盈利', '营收', 'forecast', 'earnings',
+    )
+    market_entities = (
+        '央行', '美联储', '证监会', '国务院', 'pboc', 'fed', 'ecb',
+        '上证', '恒生', '纳斯达克', '标普', '人民币', '港股', 'a股',
+    )
+    low_signal = ('盘点', '传闻', '或许', '可能', '观点', '评论', 'rumor', 'opinion')
+
+    score += min(3, sum(1 for keyword in high_impact if keyword in text))
+    score += min(2, sum(1 for keyword in medium_impact if keyword in text))
+    score += min(1, sum(1 for keyword in market_entities if keyword in text))
+    score -= min(2, sum(1 for keyword in low_signal if keyword in text))
+
+    source = item.get('source', '')
+    source_name = (source.get('name', '') if isinstance(source, dict) else str(source)).lower()
+    authoritative = ('新华社', '中国人民银行', '证监会', '国务院', 'reuters', 'bloomberg')
+    if any(name in source_name for name in authoritative):
+        score += 1
+    return max(0, min(10, score))
+
+
 def score_news_importance_batch(items: List[Dict], llm_call_func, market_context: str = "") -> List[int]:
     """
     批量评估新闻重要性（0-10分）
@@ -253,8 +288,8 @@ def score_news_importance_batch(items: List[Dict], llm_call_func, market_context
             scores.extend(_score_importance_chunk(chunk, llm_call_func, market_context))
         except Exception as exc:
             failed_batches += 1
-            print(f"     [!] 重要性评分单批失败（{len(chunk)} 条），该批用默认分：{exc}")
-            scores.extend([5] * len(chunk))
+            print(f"     [!] 重要性评分单批失败（{len(chunk)} 条），该批用确定性评分：{exc}")
+            scores.extend(deterministic_importance_score(item) for item in chunk)
 
     if failed_batches:
         print(f"     [!] 重要性评分共 {failed_batches} 批回退")

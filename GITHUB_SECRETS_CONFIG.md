@@ -8,13 +8,13 @@
 
 #### 1. OPENAI_API_KEY (必需)
 - **说明**: OpenAI 兼容 API 的密钥
-- **值示例**: `sk-xxxxxxxxxxxxxxxxxxxxx`
+- **值示例**: `sk-REDACTED`
 - **用途**: 调用 LLM 进行翻译、分析、总结
 - **状态**: ⚠️ **当前未配置** - 导致所有 LLM 功能失败
 
 #### 2. OPENAI_BASE_URL (必需)
 - **说明**: OpenAI 兼容 API 的基础 URL
-- **实际值**: `https://aiapi.hk.oliga.top/v1`
+- **实际值**: `https://api.example.com/v1`
 - **用途**: API 请求的目标地址
 - **状态**: ✓ 已配置
 
@@ -117,7 +117,7 @@ gh secret set OPENAI_MODEL_ANALYSIS -b "gpt-5.6-sol"
 ```bash
 # 设置环境变量
 export OPENAI_API_KEY="sk-your-key"
-export OPENAI_BASE_URL="https://aiapi.hk.oliga.top/v1"
+export OPENAI_BASE_URL="https://api.example.com/v1"
 export OPENAI_MODEL_TRANSLATE="deepseek-v4-flash"
 export OPENAI_MODEL_ANALYSIS="gpt-5.6-sol"
 

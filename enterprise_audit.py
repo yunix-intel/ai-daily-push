@@ -16,10 +16,12 @@ import sys
 import json
 import io
 
-# 修复 Windows 编码问题
+# Keep Windows output UTF-8 without replacing or closing the process-wide streams.
 if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            reconfigure(encoding="utf-8")
 
 def print_section(title):
     print(f"\n{'='*70}")

@@ -34,7 +34,7 @@
     logger.performance("fetch_data", duration=2.5, items=100)
 
     # 敏感信息自动脱敏
-    logger.info("API调用", api_key="sk-1234...")  # 只记录前缀
+    logger.info("API调用", api_key="sk-REDACTED")  # 只记录前缀
 
 日志格式:
     {

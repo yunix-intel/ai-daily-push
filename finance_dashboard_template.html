@@ -188,7 +188,7 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   const bloggerViews=DATA.bloggerViews||[];
   if(bloggerViews.length) nav+='<a href="#blogger-section">博主观点<b>'+bloggerViews.length+'</b></a>';
   const twitterData = DATA.twitter || {};
-  const twitterCount = (twitterData.rumors||[]).length + (twitterData.media||[]).length;
+  const twitterCount = (twitterData.rumors||[]).length + (twitterData.media||[]).length + (twitterData.comments||[]).length;
   if(twitterCount > 0) nav+='<a href="#twitter-section">Twitter观察<b>'+twitterCount+'</b></a>';
   document.getElementById('navLinks').innerHTML=nav;
   let main='';
@@ -374,20 +374,33 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   main+=renderMarket(international,'intl','🌍 国际要闻');
 
   // Twitter 财经传言与媒体报道
-  const twitter = DATA.twitter || {};
-  const rumors = twitter.rumors || [];
-  const media = twitter.media || [];
-  const twitterAvailable = twitter.available !== false;
+  const twitterSectionData = DATA.twitter || {};
+  const rumors = twitterSectionData.rumors || [];
+  const media = twitterSectionData.media || [];
+  const comments = twitterSectionData.comments || [];
+  const twitterAvailable = twitterSectionData.available !== false;
+  const twitterProvenance = twitterSectionData.provenance || {};
+  const provenanceLabels = {
+    official_x_api:'官方 X API', rsshub:'RSSHub 回退', no_content:'无新内容',
+    not_configured:'官方 API 未配置', auth_failed:'官方 API 鉴权失败',
+    quota_limited:'官方 API 配额受限', source_failed:'数据源失败'
+  };
+  const provenanceText = ['rumors','media','comments'].map(key=>{
+    const item = twitterProvenance[key] || {};
+    const label = key === 'rumors' ? '传言' : (key === 'media' ? '媒体' : '讨论');
+    return label+'：'+(provenanceLabels[item.state] || item.state || '状态未知');
+  }).join(' · ');
 
-  if(rumors.length || media.length || !twitterAvailable) {
+  if(rumors.length || media.length || comments.length || !twitterAvailable) {
     main+='<div class="market-divider" id="twitter-section"><h2>🐦 Twitter 财经观察';
-    if(rumors.length || media.length) main+='<span class="badge">'+(rumors.length + media.length)+' 条</span>';
+    if(rumors.length || media.length || comments.length) main+='<span class="badge">'+(rumors.length + media.length + comments.length)+' 条</span>';
     main+='</h2></div>';
+    main+='<div class="block"><div style="font-size:12px;color:var(--muted)">数据来源：'+esc(provenanceText)+'</div></div>';
 
     // 数据源不可用提示
-    if(!twitterAvailable && !rumors.length && !media.length) {
-      const errors = twitter.errors || {};
-      const errorMsg = errors.rumors || errors.media || errors.general || 'RSSHub 服务暂不可用';
+    if(!twitterAvailable && !rumors.length && !media.length && !comments.length) {
+      const errors = twitterSectionData.errors || {};
+      const errorMsg = errors.rumors || errors.media || errors.comments || errors.general || 'X/RSSHub 服务暂不可用';
       main+='<div class="block"><div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">';
       main+='🔺 Twitter 数据源：'+esc(errorMsg)+'</div></div>';
     }
@@ -429,17 +442,36 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
       });
       main+='</div>';
     }
+
+    // 公开市场讨论板块。此处仅表达市场情绪或线索，不能视为事实报道。
+    if(comments.length) {
+      main+='<div class="block" style="border-left:3px solid var(--accent)"><h2>💬 公开讨论 / 市场留言</h2>';
+      main+='<div style="font-size:12px;color:var(--muted);margin-bottom:12px">⚠️ <strong>未经证实</strong>，来自公开账号搜索，仅作市场情绪和线索参考</div>';
+      comments.forEach((c,idx)=>{
+        main+='<div style="padding:12px 0;border-bottom:1px dashed var(--border)">';
+        if(idx===comments.length-1) main=main.slice(0,-55);
+        main+='<div style="font-size:14px;font-weight:700;margin-bottom:6px">'+esc(c.title||'')+'</div>';
+        main+='<div style="font-size:13.5px;color:#c9d1dc;margin-bottom:8px;text-align:justify">'+esc(c.summary||c.content||'')+'</div>';
+        if(c.impact) main+='<div style="font-size:12.5px;color:var(--accent);margin-bottom:6px">💭 '+esc(c.impact)+'</div>';
+        main+='<div style="display:flex;justify-content:space-between;align-items:center">';
+        main+='<span style="font-size:12px;color:var(--muted)">'+esc(c.source||('@'+(c.username||'')))+' · <span style="color:var(--warn)">未经证实</span></span>';
+        if(c.link && c.link !== '#') main+='<a href="'+safeUrl(c.link)+'" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--accent);text-decoration:none">查看原文 →</a>';
+        main+='</div></div>';
+      });
+      main+='</div>';
+    }
   }
 
-  // 资金流向板块
   const moneyFlow = DATA.moneyFlow || {};
   const north = moneyFlow.north_flow || {};
   const showNorth = north.available && north.total_flow !== undefined;
   const hasNorthStatus = !showNorth && (north.reason || north.error || north.collection_mode === 'post_close');
-  const hasSector = moneyFlow.sector_flow && ((moneyFlow.sector_flow.top_inflow||[]).length
-                    || (moneyFlow.sector_flow.top_outflow||[]).length);
-  const hasStock = moneyFlow.stock_flow && ((moneyFlow.stock_flow.top_inflow||[]).length
-                   || (moneyFlow.stock_flow.top_outflow||[]).length);
+  const hasSector = moneyFlow.sector_flow && (((moneyFlow.sector_flow.top_inflow||[]).length
+                    || (moneyFlow.sector_flow.top_outflow||[]).length)
+                    || moneyFlow.sector_flow.reason);
+  const hasStock = moneyFlow.stock_flow && (((moneyFlow.stock_flow.top_inflow||[]).length
+                   || (moneyFlow.stock_flow.top_outflow||[]).length)
+                   || moneyFlow.stock_flow.reason);
   if(showNorth || hasNorthStatus || hasSector || hasStock) {
     main+='<div class="market-divider" id="money-flow-section"><h2>💰 资金流向</h2></div>';
 
@@ -450,6 +482,7 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
       const shCls = nf.sh_flow > 0 ? 'up' : (nf.sh_flow < 0 ? 'down' : '');
       const szCls = nf.sz_flow > 0 ? 'up' : (nf.sz_flow < 0 ? 'down' : '');
       main+='<div class="block"><h2>🔺 北向资金</h2>';
+      if(nf.stale) main+='<div style="color:var(--muted);font-size:13px;margin-top:6px">⚠️ '+esc(nf.reason || ('实时数据不可用，显示 '+(nf.trade_date || nf.date || '最近交易日')+' 的缓存'))+'</div>';
       main+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">';
       main+='<div style="background:var(--card);padding:15px;border-radius:8px;text-align:center">';
       main+='<div style="color:var(--muted);font-size:13px;margin-bottom:6px">沪股通</div>';
@@ -501,6 +534,9 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
         });
         main+='</tbody></table></div>';
       }
+      if(!sf.top_inflow?.length && !sf.top_outflow?.length && sf.reason) {
+        main+='<div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">'+esc(sf.reason)+'</div>';
+      }
       main+='</div>';
     }
 
@@ -521,6 +557,9 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
           main+='<td class="'+pctCls+'" style="text-align:right;padding:10px">'+(item.change_pct>0?'+':'')+item.change_pct.toFixed(2)+'%</td></tr>';
         });
         main+='</tbody></table></div>';
+      }
+      if(!stf.top_inflow?.length && !stf.top_outflow?.length && stf.reason) {
+        main+='<div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">'+esc(stf.reason)+'</div>';
       }
       main+='</div>';
     }

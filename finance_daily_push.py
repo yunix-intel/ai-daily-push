@@ -32,8 +32,12 @@ _DEEPSEEK_MAX_CONCURRENCY = max(1, int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "2"
 _ANALYSIS_MAX_CONCURRENCY = max(1, int(os.getenv("ANALYSIS_MAX_CONCURRENCY", "8")))
 _DEEPSEEK_SEMAPHORE = threading.BoundedSemaphore(_DEEPSEEK_MAX_CONCURRENCY)
 _ANALYSIS_SEMAPHORE = threading.BoundedSemaphore(_ANALYSIS_MAX_CONCURRENCY)
-_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "1")))
-_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "120")))
+_LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "0")))
+_LLM_TIMEOUT = max(1, int(os.getenv("LLM_TIMEOUT", "15")))
+# 一次日报运行内，网关连续不可用时立即熔断后续可选调用；测试直接调用
+# helper 时不启用该状态，由 main() 在每次运行开始时重置。
+_LLM_CIRCUIT_ENABLED = False
+_LLM_CIRCUIT_OPEN = False
 import datetime as dt_module
 from datetime import datetime, timezone, timedelta, date
 from email.utils import parsedate_to_datetime
@@ -85,6 +89,8 @@ from trading_calendar import (
 )
 from news_classifier import (
     classify_news_region_batch,
+    classify_by_keywords,
+    deterministic_importance_score,
     score_news_importance_batch,
     identify_breaking_news,
 )
@@ -513,7 +519,7 @@ def fetch_finance_items(hours=24, per_feed=20):
             return source_name, is_en, [], exc
 
     feeds = FINANCE_FEEDS_ZH + FINANCE_FEEDS_EN
-    with ThreadPoolExecutor(max_workers=min(4, len(feeds)), thread_name_prefix="finance-rss") as executor:
+    with ThreadPoolExecutor(max_workers=max(1, min(4, len(feeds))), thread_name_prefix="finance-rss") as executor:
         fetched = list(executor.map(fetch_one, feeds))
 
     for source_name, is_en, items, error in fetched:
@@ -616,8 +622,8 @@ def _looks_english(text):
 
 
 def _apply_translation(items, indexes, mapping):
-    """把翻译结果写回条目，返回成功条数。"""
-    done = 0
+    """把翻译结果写回条目，返回本轮完成翻译的条目索引。"""
+    completed = set()
     for i in indexes:
         got = mapping.get(i)
         if not got:
@@ -625,10 +631,10 @@ def _apply_translation(items, indexes, mapping):
         title_zh, summary_zh = got
         if title_zh:
             items[i]["title"] = title_zh
-            done += 1
+            completed.add(i)
         if summary_zh:
             items[i]["summary"] = summary_zh
-    return done
+    return completed
 
 
 def translate_finance_items(items):
@@ -664,7 +670,7 @@ def translate_finance_items(items):
     # 3. LLM 批量翻译
     try:
         pairs = [(i, items[i]["title"], items[i]["summary"]) for i in en_indexes]
-        done = _apply_translation(items, en_indexes, translate_batch_llm(pairs))
+        completed = _apply_translation(items, en_indexes, translate_batch_llm(pairs))
 
         # 4. 补翻：大批次里模型漏返回的条目，用小批次再走一轮，
         #    否则这些条目会以英文标题/摘要出现在页面上。
@@ -673,16 +679,23 @@ def translate_finance_items(items):
         if leftover:
             print(f"     仍有 {len(leftover)} 条未翻译，补翻一轮 ...")
             retry_pairs = [(i, items[i]["title"], items[i]["summary"]) for i in leftover]
-            done += _apply_translation(items, leftover, translate_batch_llm(retry_pairs, batch_size=5))
+            completed.update(_apply_translation(
+                items, leftover, translate_batch_llm(retry_pairs, batch_size=5)
+            ))
             still = [i for i in leftover
                      if _looks_english(items[i]["title"]) or _looks_english(items[i]["summary"])]
             if still:
                 print(f"     [!] 补翻后仍有 {len(still)} 条保留英文原文")
 
-        if done > 0:
-            print(f"     LLM 翻译完成：{done}/{len(en_indexes)} 条")
+        retained = sum(
+            1 for i in en_indexes
+            if _looks_english(items[i]["title"]) or _looks_english(items[i]["summary"])
+        )
+        if completed:
+            print(f"     LLM 翻译统计：尝试={len(en_indexes)}，完成={len(completed)}，"
+                  f"保留原文={retained}")
         else:
-            print(f"     LLM 翻译未产出结果，保留英文原文")
+            print(f"     LLM 翻译未产出结果，保留英文原文 {retained} 条")
 
         return items
 
@@ -822,6 +835,9 @@ def _llm_config():
 
 def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=None):
     """调用 OpenAI 兼容接口并解析 JSON 对象。失败抛异常，由调用方决定降级。"""
+    global _LLM_CIRCUIT_OPEN
+    if _LLM_CIRCUIT_ENABLED and _LLM_CIRCUIT_OPEN:
+        raise RuntimeError("本次运行的 LLM 网关已熔断，使用确定性降级")
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
     api_key, base_url, translate_model, analysis_model = _llm_config()
@@ -864,11 +880,16 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
                 # 再撞一次同一堵墙。退避几秒再来，成功率明显更高。
                 time.sleep(3 * (attempt + 1))
                 continue
+    if _LLM_CIRCUIT_ENABLED:
+        _LLM_CIRCUIT_OPEN = True
     raise last_exc
 
 
 def call_llm_text(system_prompt, user_prompt, retries=None, model=None, timeout=None):
     """调用 OpenAI 兼容接口并返回纯文本。"""
+    global _LLM_CIRCUIT_OPEN
+    if _LLM_CIRCUIT_ENABLED and _LLM_CIRCUIT_OPEN:
+        raise RuntimeError("本次运行的 LLM 网关已熔断，使用确定性降级")
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
     api_key, base_url, translate_model, analysis_model = _llm_config()
@@ -905,6 +926,8 @@ def call_llm_text(system_prompt, user_prompt, retries=None, model=None, timeout=
             if attempt < retries:
                 time.sleep(3 * (attempt + 1))
                 continue
+    if _LLM_CIRCUIT_ENABLED:
+        _LLM_CIRCUIT_OPEN = True
     raise last_exc
 
 
@@ -1249,7 +1272,10 @@ def collect_blogger_views(bloggers_cfg, hours=24):
             "name": blogger.get("name", ""), "url": url, "platform": platform,
             "articles": [
                 {"title": a.get("title", ""), "url": a.get("url", ""),
-                 "published": a.get("published", ""), "isLive": bool(a.get("isLive"))}
+                 "published": a.get("published", ""),
+                 "contentTime": a.get("contentTime", a.get("published", "")),
+                 "shellPublished": a.get("shellPublished", ""),
+                 "isLive": bool(a.get("isLive"))}
                 for a in blogger.get("articles", [])
             ],
         }
@@ -1286,7 +1312,8 @@ def translate_page_url(original_url):
 def shape_finance(sections_domestic, sections_international, quotes, analysis_domestic,
                   analysis_international, strategy, money_flow_data=None, window_hours=24,
                   must_read_domestic=None, must_read_international=None,
-                  blogger_views=None, twitter_content=None):
+                  blogger_views=None, twitter_content=None,
+                  breaking_events_domestic=None, breaking_events_international=None):
     """整合国内和国际市场数据，返回完整数据结构。
 
     must_read_*：按 importance_score 选出的「核心必读」条目（原始 item 结构），
@@ -1360,21 +1387,17 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
                 history_data = json.load(f)
 
             # push_history_recorder 早期版本写入列表，新版本可能写入摘要对象。
-            # 仅在字典中存在明确时间字段时覆盖默认收录窗口。
-            if isinstance(history_data, dict):
-                last_push_str = history_data.get('lastPushTime')
-                if last_push_str:
-                    from dateutil.parser import parse
-                    last_push_time = parse(last_push_str)
-                    # 使用上次推送时间作为窗口开始（更准确）
-                    window_start = last_push_time
+            # 与 aggregate_sources 使用同一套兼容解析，且排除未来记录。
+            from ai_daily_push import _latest_history_boundary
+            last_push_time = _latest_history_boundary(history_data, window_end)
+            if last_push_time:
+                window_start = min(last_push_time, window_end)
 
-                    # 计算跨越天数
-                    days_span = (window_end - window_start).total_seconds() / 86400
-                    if days_span > 1.5:  # 超过1.5天视为跨天
-                        print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
-            elif not isinstance(history_data, list):
-                print("     [WARN] 推送历史格式无法识别，使用默认收录窗口")
+                days_span = (window_end - window_start).total_seconds() / 86400
+                if days_span > 1.5:
+                    print(f"     [INFO] 收录窗口跨越 {days_span:.1f} 天（周末/长假）")
+            elif isinstance(history_data, dict) and not history_data.get("records"):
+                print("     [WARN] 推送历史没有有效时间，使用默认收录窗口")
     except Exception as e:
         print(f"     [WARN] 无法读取上次推送时间，使用默认{window_hours}小时窗口：{e}")
 
@@ -1404,12 +1427,15 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
             })
         return out
 
+    money_flow = money_flow_data or {}
+
     return {
         "meta": meta,
         "quotes": quotes,
-        "moneyFlow": money_flow_data or {},
+        "moneyFlow": money_flow,
         "domestic": {
-            "emergencyEvents": analysis_domestic.get("emergencyEvents") or [],
+            "emergencyEvents": (breaking_events_domestic if breaking_events_domestic is not None
+                                else analysis_domestic.get("emergencyEvents") or []),
             "analysis": {
                 "summary": analysis_domestic.get("summary", ""),
                 "macro": analysis_domestic.get("macro", ""),
@@ -1419,7 +1445,8 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
             "sections": shaped_domestic,
         },
         "international": {
-            "emergencyEvents": analysis_international.get("emergencyEvents") or [],
+            "emergencyEvents": (breaking_events_international if breaking_events_international is not None
+                                else analysis_international.get("emergencyEvents") or []),
             "analysis": {
                 "summary": analysis_international.get("summary", ""),
                 "macro": analysis_international.get("macro", ""),
@@ -1446,8 +1473,10 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
         "twitter": {
             "rumors": (twitter_content or {}).get("rumors", []),
             "media": (twitter_content or {}).get("media", []),
+            "comments": (twitter_content or {}).get("comments", []),
             "available": (twitter_content or {}).get("available", True),
             "errors": (twitter_content or {}).get("errors", {}),
+            "provenance": (twitter_content or {}).get("provenance", {}),
         },
     }
 
@@ -1531,6 +1560,16 @@ def build_finance_markdown(data, dashboard_url):
         if an_intl.get("summary"):
             lines.append(f"\n**市场总结**\n> {an_intl['summary']}")
 
+    money_flow = data.get("moneyFlow") or {}
+    flow_notes = []
+    for label, key in (("北向", "north_flow"), ("行业", "sector_flow"), ("个股", "stock_flow")):
+        flow = money_flow.get(key) or {}
+        if flow.get("reason") and not flow.get("available", bool(flow.get("top_inflow") or flow.get("top_outflow"))):
+            flow_notes.append(f"{label}资金：{flow['reason']}")
+    if flow_notes:
+        lines.append("\n## 💰 资金流向状态")
+        lines.extend(f"> {note}" for note in flow_notes)
+
     body = "\n".join(lines)
 
     # 尾部是「必须保留」的部分：免责声明属于投资类内容的合规要求，网页链接是这条
@@ -1601,6 +1640,9 @@ def push_feishu_markdown(webhook, title, body, tail, dashboard_url=None):
 # ----------------------------- 主流程 -----------------------------
 @monitor_task("finance_daily")
 def main():
+    global _LLM_CIRCUIT_ENABLED, _LLM_CIRCUIT_OPEN
+    _LLM_CIRCUIT_ENABLED = True
+    _LLM_CIRCUIT_OPEN = False
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-push", action="store_true")
@@ -1732,7 +1774,10 @@ def main():
 
     # Twitter 财经传言与媒体报道
     print("[1.5/5] 抓取 Twitter 财经传言与媒体报道...")
-    twitter_content = {"rumors": [], "media": [], "available": False, "errors": {}}
+    twitter_content = {
+        "rumors": [], "media": [], "comments": [], "available": False,
+        "errors": {}, "provenance": {},
+    }
     try:
         from scrapers.twitter_scraper import fetch_twitter_categorized
 
@@ -1759,10 +1804,24 @@ def main():
         )
         print(f"     ✓ 小道消息 {len(twitter_content.get('rumors', []))} 条")
         print(f"     ✓ 正规媒体 {len(twitter_content.get('media', []))} 条")
+        print(f"     ✓ 公开讨论 {len(twitter_content.get('comments', []))} 条")
+        for category in ("rumors", "media", "comments"):
+            provenance = twitter_content.get("provenance", {}).get(category, {})
+            print(
+                f"     X来源[{category}]：{provenance.get('state', 'source_failed')}；"
+                f"尝试={','.join(provenance.get('attempted_sources', [])) or 'none'}"
+            )
 
     except Exception as exc:
         print(f"     [!] Twitter 抓取失败，继续执行：{exc!r}")
-        twitter_content = {"rumors": [], "media": [], "available": False, "errors": {"general": str(exc)}}
+        twitter_content = {
+            "rumors": [], "media": [], "comments": [], "available": False,
+            "errors": {"general": str(exc)},
+            "provenance": {
+                category: {"state": "source_failed", "attempted_sources": []}
+                for category in ("rumors", "media", "comments")
+            },
+        }
 
     print(f"[2/5] 抓取财经快讯（过去 {args.hours} 小时）...")
     items_grouped = fetch_finance_items(hours=args.hours)
@@ -1774,13 +1833,35 @@ def main():
         print("     [!] 未抓到任何财经条目，终止本次财经日报（不影响 AI 日报）。")
         return
 
-    print("     [2.1] 使用关键词分类与默认重要性评分（跳过可选 LLM 分类）...")
-    items_domestic = list(items_grouped["domestic"])
-    items_international = list(items_grouped["international"])
-    for item in all_items:
-        item.setdefault("region", "domestic" if item in items_domestic else "international")
-        item.setdefault("importance_score", 5)
-    print(f"     使用来源分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
+    print(f"     [2.1] LLM 智能分类（区域+重要性）...")
+    try:
+        def llm_wrapper(system_prompt, user_prompt, model=None):
+            result = call_llm_json(system_prompt, user_prompt, model=model or _llm_config()[3])
+            return json.dumps(result, ensure_ascii=False)
+
+        regions = classify_news_region_batch(all_items, llm_wrapper)
+        scores = score_news_importance_batch(all_items, llm_wrapper)
+        if len(regions) != len(all_items):
+            raise ValueError(f"区域分类数量不匹配：{len(regions)} vs {len(all_items)}")
+        for i, item in enumerate(all_items):
+            item["region"] = regions[i]
+            item["importance_score"] = scores[i] if i < len(scores) else deterministic_importance_score(item)
+        items_domestic = [item for item in all_items if item.get("region") == "domestic"]
+        items_international = [item for item in all_items if item.get("region") == "international"]
+        items_domestic.sort(key=lambda x: x.get("importance_score", 0), reverse=True)
+        items_international.sort(key=lambda x: x.get("importance_score", 0), reverse=True)
+        print(f"     重新分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
+    except Exception as exc:
+        print(f"     [!] 智能分类部分失败，使用关键词/确定性评分：{exc!r}")
+        items_domestic = []
+        items_international = []
+        for item in all_items:
+            item["region"] = classify_by_keywords(item)
+            item["importance_score"] = deterministic_importance_score(item)
+            (items_domestic if item["region"] == "domestic" else items_international).append(item)
+        items_domestic.sort(key=lambda x: x.get("importance_score", 0), reverse=True)
+        items_international.sort(key=lambda x: x.get("importance_score", 0), reverse=True)
+        print(f"     回退分类：国内 {len(items_domestic)} 条，国际 {len(items_international)} 条")
 
     # 国际标题摘要翻译仍保留；失败时逐条保留原文。
 
@@ -1792,9 +1873,25 @@ def main():
     # 全文翻译会显著放大抓取和 LLM 延迟，默认关闭；标题摘要翻译仍保留。
     print("     [2.3] 已关闭核心文章全文翻译；标题和摘要翻译保留")
 
-    print("     [2.4] 使用启发式突发事件识别（跳过可选 LLM 识别）...")
-    breaking_events_domestic = identify_breaking_news(items_domestic, None) if items_domestic else []
-    breaking_events_international = identify_breaking_news(items_international, None) if items_international else []
+    print("     [2.4] 识别突发事件 ...")
+    breaking_llm = locals().get("llm_wrapper")
+    breaking_events_domestic = identify_breaking_news(items_domestic, breaking_llm) if items_domestic else []
+    breaking_events_international = identify_breaking_news(items_international, breaking_llm) if items_international else []
+
+    domestic_final = []
+    international_final = []
+    for event in breaking_events_domestic + breaking_events_international:
+        hint = event.get("_region_hint")
+        if hint == "international":
+            international_final.append(event)
+        elif hint == "domestic":
+            domestic_final.append(event)
+        elif event in breaking_events_domestic:
+            domestic_final.append(event)
+        else:
+            international_final.append(event)
+    breaking_events_domestic = domestic_final
+    breaking_events_international = international_final
     print(f"     突发事件：国内 {len(breaking_events_domestic)} 个，国际 {len(breaking_events_international)} 个")
 
     # 分层：核心必读（8-10分）、重要要闻（5-7分）
@@ -1865,7 +1962,7 @@ def main():
                 "summary": (analysis_domestic.get("summary", "") + "\n\n" + analysis_international.get("summary", "")).strip(),
                 "macro": (analysis_domestic.get("macro", "") + "\n\n" + analysis_international.get("macro", "")).strip(),
                 "sector": (analysis_domestic.get("sector", "") + "\n\n" + analysis_international.get("sector", "")).strip(),
-                "emergencyEvents": (analysis_domestic.get("emergencyEvents") or []) + (analysis_international.get("emergencyEvents") or []),
+                "emergencyEvents": breaking_events_domestic + breaking_events_international,
             }
             strategy = generate_strategy(combined_analysis, quotes, trading_status)
             print(f"     A股 {len(strategy.get('aShare',''))} 字，港股 {len(strategy.get('hkShare',''))} 字")
@@ -1882,7 +1979,9 @@ def main():
                         must_read_domestic=must_read_domestic,
                         must_read_international=must_read_international,
                         blogger_views=blogger_views,
-                        twitter_content=twitter_content)
+                        twitter_content=twitter_content,
+                        breaking_events_domestic=breaking_events_domestic,
+                        breaking_events_international=breaking_events_international)
 
     out_html = os.path.join(HERE, "finance_dashboard.html")
     with open(out_html, "w", encoding="utf-8") as f:
@@ -1907,20 +2006,28 @@ def main():
 
     webhook = (os.environ.get("WECOM_WEBHOOK") or cfg.get("wecom_webhook", "")).strip()
     feishu_webhook = (os.environ.get("FEISHU_WEBHOOK") or cfg.get("feishu_webhook", "")).strip()
+    delivery_status_path = os.environ.get("DELIVERY_STATUS_FILE", "").strip()
+    delivery_succeeded = False
+    delivery_attempted = False
+    delivery_failure = "not_configured"
     wechat_cfg = cfg.get("wechat_official", {}) or {}
     wechat_appid = (os.environ.get("WECHAT_APPID") or wechat_cfg.get("appid", "")).strip()
     wechat_appsecret = (os.environ.get("WECHAT_APPSECRET") or wechat_cfg.get("appsecret", "")).strip()
 
     if webhook:
+        delivery_attempted = True
         print("[5/5] 推送财经日报到企业微信群机器人 ...")
         title = f"财经日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         try:
             # 财经日报保持纯 news 卡片；卡片只指向财经页，不混入 AI 或监控链接。
             resp = push_wecom_news_card(webhook, dashboard_url, title_prefix=title) if dashboard_url else push_markdown(webhook, body, tail)
             print("     企业微信返回：", resp)
-            if isinstance(resp, dict) and resp.get("errcode", 0) != 0:
+            delivery_succeeded = isinstance(resp, dict) and resp.get("errcode", 0) == 0
+            delivery_failure = "" if delivery_succeeded else "api_rejected"
+            if not delivery_succeeded:
                 print("     [!] 推送失败：", resp)
         except Exception as exc:
+            delivery_failure = f"exception:{type(exc).__name__}"
             print("     [!] 企业微信推送异常：", repr(exc))
 
     # 公众号发布不应因上方渠道发送而提前 return；它是独立的输出渠道。
@@ -1935,6 +2042,17 @@ def main():
 
     if not webhook and not feishu_webhook:
         print("[5/5] 未配置推送渠道（WECOM_WEBHOOK / FEISHU_WEBHOOK），仅生成网页。")
+
+    if delivery_status_path:
+        from delivery_status import write_delivery_status
+        write_delivery_status(
+            delivery_status_path, "finance", "wecom_webhook" if webhook else "none",
+            bool(webhook), delivery_attempted, delivery_succeeded,
+            completed_at=datetime.now(timezone.utc) if delivery_succeeded else None,
+            reason=delivery_failure,
+        )
+        if not delivery_succeeded:
+            raise RuntimeError(f"企业微信财经日报推送未成功: {delivery_failure}")
 
     wechat_enabled = bool(wechat_appid and wechat_appsecret) or wechat_cfg.get("enabled", False)
 

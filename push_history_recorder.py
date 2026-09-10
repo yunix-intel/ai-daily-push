@@ -8,7 +8,7 @@
 
 功能：
 1. 记录每次推送的实际时间
-2. 计算相对于预期时间（UTC 23:23 = 北京时间次日 07:23）的延迟
+2. 计算相对于预期时间（UTC 23:00 = 北京时间次日 07:00）的延迟
 3. 生成可视化 HTML 报告
 4. 部署到 GitHub Pages，随时查看
 
@@ -21,7 +21,7 @@
 
 ```yaml
 - name: Record push time
-  run: python push_history_recorder.py --expected-time "23:23"
+  run: python push_history_recorder.py --expected-time "23:00" --delivery-status ai.json --delivery-status finance.json
 ```
 
 生成的报告会包含：
@@ -34,7 +34,7 @@
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 
@@ -89,15 +89,66 @@ class PushHistoryRecorder:
         self.history = self._load_history()
 
     def _load_history(self) -> List[Dict]:
-        """加载历史记录"""
-        if os.path.exists(self.history_file):
-            try:
-                with open(self.history_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"读取历史记录失败: {e}")
-                return []
-        return []
+        """Load and normalize canonical and supported legacy records."""
+        if not os.path.exists(self.history_file):
+            return []
+        try:
+            with open(self.history_file, "r", encoding="utf-8") as stream:
+                payload = json.load(stream)
+        except Exception as exc:
+            print(f"读取历史记录失败: {exc}")
+            return []
+        if isinstance(payload, dict):
+            payload = payload.get("records", [payload])
+        if not isinstance(payload, list):
+            return []
+        records = []
+        for item in payload:
+            normalized = self._normalize_record(item)
+            if normalized is not None:
+                records.append(normalized)
+        return records
+
+    @staticmethod
+    def _parse_time(value: Any) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @classmethod
+    def _normalize_record(cls, item: Any) -> Optional[Dict]:
+        """Normalize valid legacy records without inventing unavailable milestones."""
+        if not isinstance(item, dict):
+            return None
+        delivery = cls._parse_time(
+            item.get("delivery_completed_at") or item.get("timestamp")
+            or item.get("lastPushTime")
+        )
+        scheduled = cls._parse_time(
+            item.get("scheduled_at") or item.get("expected_time")
+        )
+        if delivery is None or scheduled is None or delivery < scheduled:
+            return None
+        record = dict(item)
+        try:
+            record["schema_version"] = int(item.get("schema_version") or 1)
+        except (TypeError, ValueError):
+            record["schema_version"] = 1
+        record["scheduled_at"] = scheduled.isoformat()
+        record["delivery_completed_at"] = delivery.isoformat()
+        record.setdefault("timestamp", delivery.isoformat())
+        record.setdefault("expected_time", scheduled.isoformat())
+        delay = (delivery - scheduled).total_seconds()
+        record["delay_seconds"] = delay
+        record["delay_minutes"] = round(delay / 60, 1)
+        record.setdefault("date", delivery.strftime("%Y-%m-%d"))
+        return record
 
     def _save_history(self):
         """保存历史记录"""
@@ -107,33 +158,43 @@ class PushHistoryRecorder:
         except Exception as e:
             print(f"保存历史记录失败: {e}")
 
-    def record_push(self, expected_time: str = "23:23", task_name: str = "AI Daily Push"):
-        """
-        记录本次推送
-
-        Args:
-            expected_time: 预期推送时间（HH:MM，按 UTC 解析）。
-                默认 23:23 对应 workflow 的 cron，即北京时间次日 07:23。
-            task_name: 任务名称
-        """
+    def record_push(self, expected_time: str = "23:00", task_name: str = "AI Daily Push",
+                    delivery_completed_at: Optional[datetime] = None,
+                    event_created_at: Optional[datetime] = None,
+                    runner_started_at: Optional[datetime] = None,
+                    pipeline_completed_at: Optional[datetime] = None):
+        """Record successful delivery and any available pipeline milestones."""
         now = datetime.now(timezone.utc)
+        delivery = delivery_completed_at or now
+        if delivery.tzinfo is None:
+            delivery = delivery.replace(tzinfo=timezone.utc)
+        delivery = delivery.astimezone(timezone.utc)
+        expected_dt = self._resolve_expected_dt(delivery, expected_time)
+        delay_seconds = (delivery - expected_dt).total_seconds()
 
-        expected_dt = self._resolve_expected_dt(now, expected_time)
+        def iso(value):
+            if value is None:
+                return None
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc).isoformat()
 
-        # 计算延迟
-        delay_seconds = (now - expected_dt).total_seconds()
-
-        # 记录
         record = {
+            "schema_version": 2,
             "task": task_name,
-            "timestamp": now.isoformat(),
+            "scheduled_at": expected_dt.isoformat(),
+            "event_created_at": iso(event_created_at),
+            "runner_started_at": iso(runner_started_at),
+            "delivery_completed_at": delivery.isoformat(),
+            "pipeline_completed_at": iso(pipeline_completed_at),
+            # Compatibility fields retained for existing readers and reports.
+            "timestamp": delivery.isoformat(),
             "expected_time": expected_dt.isoformat(),
             "delay_seconds": delay_seconds,
             "delay_minutes": round(delay_seconds / 60, 1),
-            "date": now.strftime("%Y-%m-%d"),
-            "actual_time": now.strftime("%H:%M:%S"),
-            # 给人看的字段。原 UTC 字段保留不动，历史记录才能继续渲染。
-            "actual_time_bj": format_beijing_time(now),
+            "date": delivery.strftime("%Y-%m-%d"),
+            "actual_time": delivery.strftime("%H:%M:%S"),
+            "actual_time_bj": format_beijing_time(delivery),
             "expected_time_bj": format_beijing_time(expected_dt),
         }
 
@@ -144,7 +205,7 @@ class PushHistoryRecorder:
 
         self._save_history()
 
-        print(f"✓ 记录推送时间:")
+        print(f"[OK] 记录推送时间:")
         print(f"  日期: {record['date']}")
         print(f"  实际时间: {record['actual_time_bj']}")
         print(f"  预期时间: {record['expected_time_bj']}")
@@ -168,6 +229,9 @@ class PushHistoryRecorder:
         Returns:
             校正后的 UTC 预期时间
         """
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+
         expected_hour, expected_minute = map(int, expected_time.split(':'))
         expected_dt = datetime.combine(
             now.date(),
@@ -217,7 +281,7 @@ class PushHistoryRecorder:
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(html)
 
-        print(f"✓ 报告已生成: {output_file}")
+        print(f"[OK] 报告已生成: {output_file}")
 
     def _build_html(self, total_records, avg_delay, max_delay, min_delay, recent_records):
         """构建 HTML 报告"""
@@ -440,27 +504,40 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="推送时间历史记录器")
-    parser.add_argument("--expected-time", default="23:23",
-                        help="预期推送时间（HH:MM，UTC）。默认对应 workflow 的 cron UTC 23:23 = 北京时间次日 07:23")
+    parser.add_argument("--expected-time", default="23:00",
+                        help="预期推送时间（HH:MM，UTC）。默认对应 workflow 的 cron UTC 23:00 = 北京时间次日 07:00")
     parser.add_argument("--task", default="AI Daily Push", help="任务名称")
     parser.add_argument("--report", default="push_history_report.html", help="报告输出路径")
     parser.add_argument("--no-record", action="store_true", help="不记录本次，只生成报告")
+    parser.add_argument("--delivery-status", action="append", default=[],
+                        help="日报任务生成的脱敏推送状态 JSON；可重复指定")
+    parser.add_argument("--event-created-at", default=None, help="GitHub 事件创建时间（ISO 8601）")
+    parser.add_argument("--runner-started-at", default=None, help="Workflow runner 启动时间（ISO 8601）")
+    parser.add_argument("--pipeline-completed-at", default=None, help="流水线完成时间（ISO 8601）")
 
     args = parser.parse_args()
 
     recorder = PushHistoryRecorder()
 
     if not args.no_record:
+        delivery = None
+        if args.delivery_status:
+            from delivery_status import latest_successful_delivery
+            delivery = latest_successful_delivery(args.delivery_status)
         # 记录本次推送
         recorder.record_push(
             expected_time=args.expected_time,
-            task_name=args.task
+            task_name=args.task,
+            delivery_completed_at=delivery,
+            event_created_at=recorder._parse_time(args.event_created_at),
+            runner_started_at=recorder._parse_time(args.runner_started_at),
+            pipeline_completed_at=recorder._parse_time(args.pipeline_completed_at),
         )
 
     # 生成报告
     recorder.generate_report(output_file=args.report)
 
-    print("\n✓ 完成")
+    print("\n[OK] 完成")
 
 
 if __name__ == "__main__":

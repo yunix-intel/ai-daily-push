@@ -235,7 +235,7 @@ class BloggerScraper(BaseScraper):
         # 那个时刻还没到，不排除的话会把今天尚未写入内容的空壳也算进来。
         now = datetime.now()
         fresh = [a for a in listing
-                 if cutoff <= a["effective"] and a["published"] <= now][:max_articles]
+                 if cutoff <= a["effective"] <= now][:max_articles]
 
         # 区分「源正常但今天没发」和「源已停更」：后者值得提醒，
         # 前者是常态（周末、休市日博主本来就不发）。
@@ -252,17 +252,30 @@ class BloggerScraper(BaseScraper):
             return result
 
         for art in fresh:
-            body = self.fetch_article_body(art["url"]) if with_body else ""
+            if with_body:
+                try:
+                    body = self.fetch_article_body(art["url"])
+                except Exception as exc:
+                    # Keep the article title/link when an individual body request fails.
+                    print(f"     [WARN] 正文抓取失败 {art['url']}：{exc!r}")
+                    body = ""
+            else:
+                body = ""
             # 直播贴的空壳（还没开盘）没有信息量，别送去占 LLM 上下文
             if art["is_live"] and len(body) < 60:
                 continue
-            result["articles"].append({
+            article = {
                 "title": art["title"],
                 "url": art["url"],
-                "published": art["published"].strftime("%Y-%m-%d %H:%M"),
+                # For live posts this is the date represented by the accumulated content.
+                "published": art["effective"].strftime("%Y-%m-%d %H:%M"),
+                "contentTime": art["effective"].strftime("%Y-%m-%d %H:%M"),
                 "isLive": art["is_live"],
                 "content": body,
-            })
+            }
+            if art["is_live"] and art["published"] != art["effective"]:
+                article["shellPublished"] = art["published"].strftime("%Y-%m-%d %H:%M")
+            result["articles"].append(article)
 
         if not result["articles"]:
             print(f"     {label}：{hours}h 内 {len(fresh)} 篇均无有效正文")

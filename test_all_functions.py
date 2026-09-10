@@ -106,7 +106,9 @@ class TestMoneyFlowScraper(unittest.TestCase):
         response.raise_for_status.return_value = None
         response.json.return_value = {"data": {"hk2sh": {"dayNetAmtIn": 0}, "hk2sz": {"dayNetAmtIn": 0}}}
         with patch.object(money_flow_scraper.requests, "get", return_value=response) as get:
-            result = money_flow_scraper.MoneyFlowScraper().fetch_north_flow()
+            scraper = money_flow_scraper.MoneyFlowScraper()
+            with patch.object(scraper, "_load_cached_north", return_value=None):
+                result = scraper.fetch_north_flow()
         self.assertFalse(result["available"])
         self.assertGreaterEqual(get.call_count, 1)
 
@@ -126,13 +128,16 @@ class TestOtherCurrentAPIs(unittest.TestCase):
     def test_github_monitor_urllib_and_analysis(self):
         import github_monitor as m
         monitor = m.GitHubMonitor(repo="owner/repo", workflow_name="CI", token="token")
-        data = {"workflow_runs": [{"id": 1, "run_number": 2, "conclusion": "success",
-                                    "created_at": "2026-09-01T00:00:00Z", "run_started_at": "2026-09-01T00:05:00Z",
+        body = {"workflow_runs": [{"id": 1, "run_number": 2, "event": "schedule",
+                                    "status": "completed", "conclusion": "success",
+                                    "created_at": "2026-09-01T00:05:00Z", "run_started_at": "2026-09-01T00:05:30Z",
+                                    "updated_at": "2026-09-01T00:06:00Z",
                                     "html_url": "https://example.invalid/run/1"}]}
-        with patch.object(monitor, "_http_get", return_value=data):
+        with patch.object(monitor, "_get_workflow_id", return_value=123), \
+                patch.object(monitor, "_http_get", return_value=body):
             runs = monitor.get_recent_runs()
         self.assertEqual(len(runs), 1)
-        self.assertEqual(monitor.analyze_delays(runs)["average_delay_seconds"], 300.0)
+        self.assertEqual(monitor.analyze_delays(runs)["average_delay_seconds"], 3900.0)
 
     def test_article_extractor_fallback_is_deterministic(self):
         import article_extractor as m

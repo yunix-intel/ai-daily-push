@@ -11,7 +11,7 @@ from typing import List, Dict, Optional
 import xml.etree.ElementTree as ET
 import requests
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 
 class TwitterScraper:
@@ -119,14 +119,19 @@ class TwitterScraper:
                         "username": username
                     })
 
+                state = "rsshub" if tweets else "no_content"
                 return {
                     "tweets": tweets,
-                    "available": True,
-                    "source_url": mirror
+                    "available": bool(tweets),
+                    "source": "rsshub",
+                    "source_url": "rsshub",
+                    "provenance": state,
+                    "attempted_sources": ["rsshub"],
+                    **({"error": "RSSHub 返回空内容"} if not tweets else {}),
                 }
 
             except Exception as e:
-                last_error = f"{mirror}: {e!r}"
+                last_error = repr(e)
                 continue
 
         # 所有镜像都失败
@@ -136,7 +141,10 @@ class TwitterScraper:
             "tweets": [],
             "available": False,
             "error": last_error or "所有 RSSHub 镜像均不可用",
-            "source_url": ""
+            "source": "rsshub",
+            "source_url": "",
+            "provenance": "source_failed",
+            "attempted_sources": ["rsshub"],
         }
 
     def fetch_multiple_accounts(self, accounts: Optional[List[str]] = None,
@@ -163,7 +171,6 @@ class TwitterScraper:
 
         all_tweets = []
         failed_accounts = []
-        successful_mirrors = set()
 
         from datetime import datetime, timedelta
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -181,25 +188,29 @@ class TwitterScraper:
                     if t.get("pub_date") and t["pub_date"] >= cutoff
                 ]
                 all_tweets.extend(fresh_tweets)
-                if fetch_result.get("source_url"):
-                    successful_mirrors.add(fetch_result["source_url"])
             else:
                 failed_accounts.append(username)
 
         if not all_tweets:
-            error_msg = "所有账号均抓取失败" if len(failed_accounts) == len(accounts) else f"{hours}小时内无新推文"
+            state = "source_failed" if len(failed_accounts) == len(accounts) else "no_content"
+            error_msg = "所有账号均抓取失败" if state == "source_failed" else f"{hours}小时内无新推文"
             return {
                 "tweets": [],
                 "available": False,
                 "failed_accounts": failed_accounts,
-                "error": error_msg
+                "error": error_msg,
+                "source": "rsshub",
+                "provenance": state,
+                "attempted_sources": ["rsshub"],
             }
 
         return {
             "tweets": all_tweets,
             "available": True,
             "failed_accounts": failed_accounts,
-            "successful_mirrors": list(successful_mirrors)
+            "source": "rsshub",
+            "provenance": "rsshub",
+            "attempted_sources": ["rsshub"],
         }
 
     def filter_and_summarize(self, tweets: List[Dict], llm_caller,
@@ -234,6 +245,12 @@ class TwitterScraper:
 从正规媒体推文中提取重要财经报道，过滤广告和无关内容。
 只返回 JSON 数组，不要其他文字。"""
             impact_field = "报道重要性分析（30字内）"
+        elif category == "comments":
+            system_prompt = """你是财经市场讨论分析专家。
+从公开推文中提取有信息量的市场讨论，过滤广告、纯情绪和无依据喊单。
+所有内容均标记为“未经证实”，不得当作事实或正规媒体报道。
+只返回 JSON 数组，不要其他文字。"""
+            impact_field = "讨论焦点（30字内）"
         else:
             system_prompt = """你是财经市场传言分析专家。
 从推文中识别有价值的市场传言，过滤噪音（广告、无关内容）。
@@ -241,7 +258,13 @@ class TwitterScraper:
 只返回 JSON 数组，不要其他文字。"""
             impact_field = "市场影响分析（30字内）"
 
-        user_prompt = f"""分析以下 Twitter 推文，提取有价值的{'财经报道' if category == 'media' else '市场传言'}。
+        if category == "media":
+            content_type = "财经报道"
+        elif category == "comments":
+            content_type = "公开市场讨论"
+        else:
+            content_type = "市场传言"
+        user_prompt = f"""分析以下 Twitter 推文，提取有价值的{content_type}。
 
 筛选标准：
 - ✅ 保留：市场动向、重大交易、公司并购、监管变化、重要人物观点
@@ -294,6 +317,10 @@ class TwitterScraper:
                 if 0 <= idx < len(tweets):
                     item["link"] = tweets[idx].get("link", "#")
                     item["pub_date"] = tweets[idx].get("pub_date")
+                    for field in ("username", "author_id", "id", "conversation_id",
+                                  "in_reply_to_user_id", "public_metrics", "content", "source"):
+                        if field not in item and field in tweets[idx]:
+                            item[field] = tweets[idx][field]
                 else:
                     item["link"] = "#"
                     item["pub_date"] = None
@@ -336,6 +363,59 @@ def fetch_twitter_rumors(llm_caller, accounts: Optional[List[str]] = None,
     return rumors
 
 
+def _fetch_official_accounts(scraper, accounts, limit_per_account, hours):
+    """Fetch configured accounts through the optional official X API."""
+    from .x_api_scraper import XApiScraper
+
+    api = XApiScraper()
+    if not api.configured:
+        return api._unavailable("X_BEARER_TOKEN 未配置", "not_configured")
+    fetched = []
+    failed = []
+    failure_states = []
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    for username in accounts:
+        result = api.fetch_username_tweets(username, limit=limit_per_account)
+        if not result.get("available"):
+            failed.append(username)
+            failure_states.append(result.get("provenance", "source_failed"))
+            continue
+        fetched.extend(t for t in result.get("tweets", [])
+                       if t.get("pub_date") and t["pub_date"] >= cutoff)
+    if not fetched:
+        if failure_states and all(state == "auth_failed" for state in failure_states):
+            state = "auth_failed"
+        elif failure_states and all(state == "quota_limited" for state in failure_states):
+            state = "quota_limited"
+        elif failure_states and all(state == "not_configured" for state in failure_states):
+            state = "not_configured"
+        elif failed and len(failed) == len(accounts):
+            state = "source_failed"
+        else:
+            state = "no_content"
+        return api._unavailable(
+            "官方 X API 没有可用内容", state, failed_accounts=failed,
+        )
+    return {
+        "tweets": fetched,
+        "available": True,
+        "failed_accounts": failed,
+        "source": "official_x_api",
+        "provenance": "official_x_api",
+        "attempted_sources": ["official_x_api"],
+    }
+
+
+def _fetch_official_comments(terms, limit=20):
+    """Fetch public finance discussion through Recent Search when configured."""
+    from .x_api_scraper import XApiScraper
+
+    api = XApiScraper()
+    if not api.configured:
+        return api._unavailable("X_BEARER_TOKEN 未配置", "not_configured")
+    return api.fetch_finance_comments(terms, limit=limit)
+
+
 def fetch_twitter_categorized(llm_caller, max_per_category: int = 5, hours: int = 24,
                               analysis_model: Optional[str] = None) -> Dict[str, List[Dict]]:
     """
@@ -358,9 +438,41 @@ def fetch_twitter_categorized(llm_caller, max_per_category: int = 5, hours: int 
     result = {
         "rumors": [],
         "media": [],
+        "comments": [],
         "available": False,
-        "errors": {}
+        "errors": {},
+        "provenance": {},
     }
+
+    def provenance_for(fetch_result, official_result=None):
+        fetch_result = fetch_result or {}
+        official_result = official_result or {}
+        attempted = []
+        fetch_source = fetch_result.get("source")
+        official_source = official_result.get("source")
+        for source in (
+            official_result.get("attempted_sources", [])
+            + ([official_source] if official_source else [])
+            + fetch_result.get("attempted_sources", [])
+            + ([fetch_source] if fetch_source else [])
+        ):
+            if source in ("official_x_api", "rsshub") and source not in attempted:
+                attempted.append(source)
+        state = fetch_result.get("provenance") or fetch_source
+        if not state and fetch_result.get("available"):
+            state = "official_x_api" if "official_x_api" in attempted else "rsshub"
+        state = state or "source_failed"
+        details = {
+            "state": state,
+            "attempted_sources": attempted,
+        }
+        official_state = official_result.get("provenance") or official_source
+        if state == "rsshub" and official_state not in (None, "official_x_api"):
+            details["degraded_from"] = official_state
+        error = fetch_result.get("error")
+        if error:
+            details["reason"] = str(error)
+        return details
 
     def summarize_one(args):
         category, fetch_result = args
@@ -377,15 +489,49 @@ def fetch_twitter_categorized(llm_caller, max_per_category: int = 5, hours: int 
     print(f"     抓取 {len(scraper.RUMOR_ACCOUNTS)} 个爆料型账号...")
     print("\n[Twitter 正规媒体]")
     print(f"     抓取 {len(scraper.MEDIA_ACCOUNTS)} 个媒体账号...")
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="twitter-category") as executor:
+    print("\n[Twitter 公开讨论]")
+    comment_terms = [
+        "$SPY", "$QQQ", "$AAPL", "$TSLA", "$NVDA",
+        "Federal Reserve", "earnings", "merger",
+    ]
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="twitter-category") as executor:
         rumor_future = executor.submit(
-            scraper.fetch_multiple_accounts, scraper.RUMOR_ACCOUNTS, 5, hours
+            _fetch_official_accounts, scraper, scraper.RUMOR_ACCOUNTS, 5, hours
         )
         media_future = executor.submit(
-            scraper.fetch_multiple_accounts, scraper.MEDIA_ACCOUNTS, 5, hours
+            _fetch_official_accounts, scraper, scraper.MEDIA_ACCOUNTS, 5, hours
+        )
+        comments_future = executor.submit(
+            _fetch_official_comments, comment_terms, max(20, max_per_category * 4)
         )
         rumor_result = rumor_future.result()
         media_result = media_future.result()
+        comments_result = comments_future.result()
+
+    official_rumor_result = rumor_result
+    official_media_result = media_result
+
+    # Official X API is opt-in. A category that is unavailable or empty falls
+    # back independently so rumor accounts are never lost because media worked.
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="twitter-category") as executor:
+        rumor_future = (executor.submit(scraper.fetch_multiple_accounts,
+                                        scraper.RUMOR_ACCOUNTS, 5, hours)
+                        if not rumor_result or not rumor_result.get("available") else None)
+        media_future = (executor.submit(scraper.fetch_multiple_accounts,
+                                        scraper.MEDIA_ACCOUNTS, 5, hours)
+                        if not media_result or not media_result.get("available") else None)
+        if rumor_future:
+            rumor_result = rumor_future.result()
+        if media_future:
+            media_result = media_future.result()
+
+    result["provenance"]["rumors"] = provenance_for(
+        rumor_result, official_rumor_result,
+    )
+    result["provenance"]["media"] = provenance_for(
+        media_result, official_media_result,
+    )
+    result["provenance"]["comments"] = provenance_for(comments_result)
 
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="twitter-category") as executor:
         summary_results = list(executor.map(
@@ -402,6 +548,32 @@ def fetch_twitter_categorized(llm_caller, max_per_category: int = 5, hours: int 
         print(f"     提取到 {len(entries)} 条内容")
         result["available"] = True
 
-    if not result["rumors"] and not result["media"]:
+    def summarize_comments(fetch_result):
+        if not fetch_result or not fetch_result.get("available"):
+            return [], (fetch_result or {}).get("error", "抓取失败")
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        fresh_tweets = [
+            tweet for tweet in fetch_result.get("tweets", [])
+            if tweet.get("pub_date") and tweet["pub_date"] >= cutoff
+        ]
+        if not fresh_tweets:
+            return [], f"{hours}小时内无新讨论"
+        print("     使用 LLM 过滤 comments 噪音...")
+        return scraper.filter_and_summarize(
+            fresh_tweets, llm_caller,
+            max_rumors=max_per_category, category="comments",
+            analysis_model=analysis_model,
+        ), ""
+
+    comments_entries, comments_error = summarize_comments(comments_result)
+    if comments_error:
+        result["errors"]["comments"] = comments_error
+        print(f"     [!] comments 抓取失败：{comments_error}")
+    else:
+        result["comments"] = comments_entries
+        print(f"     提取到 {len(comments_entries)} 条公开讨论")
+        result["available"] = bool(result["comments"] or result["available"])
+
+    if not result["rumors"] and not result["media"] and not result["comments"]:
         result["available"] = False
     return result

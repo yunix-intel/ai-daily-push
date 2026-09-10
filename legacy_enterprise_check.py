@@ -138,7 +138,7 @@ def test_log_sanitization():
         logger = LoggerFactory.get_logger("test_sanitization")
 
         # 测试敏感信息记录
-        api_key = "sk-1234567890abcdef1234567890abcdef"
+        api_key = "sk-REDACTED"
         logger.info("测试API密钥", api_key_prefix=api_key[:7])
 
         print(f"✓ 日志脱敏功能正常")

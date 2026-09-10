@@ -10,8 +10,13 @@
 4. 邮件 SMTP
 5. 自定义 Webhook
 """
+import base64
+import hashlib
+import hmac
 import json
 import os
+import time
+import urllib.parse
 import urllib.request
 import urllib.error
 from typing import Optional, Dict, Any
@@ -165,7 +170,20 @@ class AlertNotifier:
             }
         }
 
-        # TODO: 如果配置了 secret，需要签名
+        # 钉钉要求把 timestamp/sign 拼到 webhook 查询参数中；未配置 secret 时
+        # 保留兼容的无签名请求。
+        secret = config.get("secret", "")
+        if secret:
+            timestamp = str(int(time.time() * 1000))
+            sign_text = f"{timestamp}\n{secret}".encode("utf-8")
+            sign = base64.b64encode(
+                hmac.new(secret.encode("utf-8"), sign_text, hashlib.sha256).digest()
+            ).decode("utf-8")
+            separator = "&" if "?" in webhook else "?"
+            webhook = (
+                f"{webhook}{separator}timestamp={timestamp}"
+                f"&sign={urllib.parse.quote(sign, safe='')}"
+            )
         self._http_post(webhook, payload)
 
     def _send_feishu(self, level: str, title: str, message: str, details: Optional[Dict], config: Dict):
