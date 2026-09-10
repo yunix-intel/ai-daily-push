@@ -1075,12 +1075,30 @@ class TestGitHubMonitorCoverageCompletion(unittest.TestCase):
              patch.object(monitor, "evaluate_latest", return_value={"state": "missing", "alert": True, "delay_seconds": 1}), \
              patch("alerting.send_alert", side_effect=ImportError):
             self.assertTrue(monitor.check_and_alert(0))
+            evaluation = monitor.check_and_alert(0, return_evaluation=True)
+            self.assertEqual(evaluation["state"], "missing")
+            self.assertTrue(evaluation["alert"])
+        with patch.object(monitor, "get_recent_runs", return_value=[]), \
+             patch.object(monitor, "evaluate_latest", return_value={"state": "success", "alert": False, "delay_seconds": 0}):
+            evaluation = monitor.check_and_alert(0, return_evaluation=True)
+            self.assertEqual(evaluation["state"], "success")
+            self.assertFalse(evaluation["alert"])
         fake = MagicMock(repo="owner/repo", workflow_name="Daily")
-        fake.check_and_alert.return_value = True
+        fake.check_and_alert.return_value = {
+            "state": "success", "alert": True, "delay_seconds": 600,
+        }
+        with patch.object(module, "GitHubMonitor", return_value=fake), \
+             patch("sys.argv", ["github_monitor.py", "--repo", "owner/repo", "--check-delay"]):
+            self.assertEqual(module.main(), 0)
+        fake.check_and_alert.return_value = {
+            "state": "missing", "alert": True, "delay_seconds": 600,
+        }
         with patch.object(module, "GitHubMonitor", return_value=fake), \
              patch("sys.argv", ["github_monitor.py", "--repo", "owner/repo", "--check-delay"]):
             self.assertEqual(module.main(), 1)
-        fake.check_and_alert.return_value = False
+        fake.check_and_alert.return_value = {
+            "state": "success", "alert": False, "delay_seconds": 0,
+        }
         with patch.object(module, "GitHubMonitor", return_value=fake), \
              patch("sys.argv", ["github_monitor.py", "--repo", "owner/repo", "--check-delay"]):
             self.assertEqual(module.main(), 0)
@@ -1271,7 +1289,7 @@ class TestSmallModuleCoverageCompletion(unittest.TestCase):
         info = version.get_version_info()
         self.assertEqual(info["version"], version.__version__)
         self.assertEqual(info["version_info"], version.__version_info__)
-        self.assertIn("候选版本", info["description"])
+        self.assertIn("稳定版本", info["description"])
         with patch("builtins.print") as output:
             runpy.run_module("__version__", run_name="__main__")
         self.assertTrue(output.called)

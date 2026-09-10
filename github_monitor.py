@@ -259,12 +259,18 @@ class GitHubMonitor:
                 "delay_seconds": latest["dispatch_delay_seconds"]
                 if latest["dispatch_delay_seconds"] is not None else elapsed}
 
-    def check_and_alert(self, threshold_seconds: int = 300) -> bool:
-        """Alert for a missing, delayed/running, or failed scheduled run."""
+    def check_and_alert(self, threshold_seconds: int = 300,
+                        return_evaluation: bool = False):
+        """Alert when needed and optionally return the evaluated run state.
+
+        ``alert`` and workflow failure are intentionally separate: a completed
+        successful run may warrant a scheduling-delay warning without making
+        the monitor workflow itself fail.
+        """
         evaluation = self.evaluate_latest(self.get_recent_runs(limit=10),
                                           threshold_seconds)
         if not evaluation["alert"]:
-            return False
+            return evaluation if return_evaluation else False
         state_labels = {
             "missing": "计划任务未创建",
             "queued": "计划任务排队延迟",
@@ -290,7 +296,7 @@ class GitHubMonitor:
             )
         except ImportError:
             print(f"GitHub Actions 告警: {evaluation['state']} ({delay_seconds:.0f}秒)")
-        return True
+        return evaluation if return_evaluation else True
 
     def generate_report(self, output_file: str = "github_monitor_report.html"):
         report = self.analyze_delays(self.get_recent_runs())
@@ -377,9 +383,17 @@ def main():
                                 args.expected_time)
         print(f"监控仓库: {monitor.repo}")
         if args.check_delay:
-            alerted = monitor.check_and_alert(args.threshold)
-            print("已触发告警" if alerted else "计划运行状态正常")
-            return 1 if alerted else 0
+            evaluation = monitor.check_and_alert(
+                args.threshold, return_evaluation=True)
+            state = evaluation.get("state", "unknown")
+            if evaluation.get("alert"):
+                print(f"已触发告警：{state}")
+            else:
+                print(f"计划运行状态正常：{state}")
+            # A scheduling warning must not turn a successful daily run into an
+            # "all jobs failed" monitor email.  Reserve non-zero status for a
+            # missing run, a genuinely failed/cancelled run, or monitor errors.
+            return 1 if state in ("missing", "failed") else 0
         runs = monitor.get_recent_runs(args.limit)
         report = monitor.analyze_delays(runs)
         print(f"运行: {report['total_runs']}；计划: {report['scheduled_runs']}；手工: {report['manual_runs']}")

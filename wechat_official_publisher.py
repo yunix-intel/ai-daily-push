@@ -7,8 +7,24 @@ import json
 import time
 import hashlib
 import os
+import re
 import urllib.request
 import urllib.parse
+
+
+def _standalone_article_html(content):
+    """Strip GitHub Pages navigation from outbound article content."""
+    if not content:
+        return content or ""
+    content = re.sub(
+        r'<nav\b[^>]*class=["\'][^"\']*\bglobal-nav\b[^"\']*["\'][^>]*>.*?</nav\s*>',
+        '', content, flags=re.IGNORECASE | re.DOTALL,
+    )
+    content = re.sub(
+        r'<style\b[^>]*>.*?\.global-nav\b.*?</style\s*>',
+        '', content, flags=re.IGNORECASE | re.DOTALL,
+    )
+    return content
 
 
 class WechatOfficialPublisher:
@@ -138,7 +154,7 @@ class WechatOfficialPublisher:
             "title": title,
             "author": author,
             "digest": digest,
-            "content": content,
+            "content": _standalone_article_html(content),
             "content_source_url": content_source_url,
             "thumb_media_id": thumb_media_id,
             "need_open_comment": 0,

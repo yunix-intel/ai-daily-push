@@ -3,11 +3,18 @@
 """End-to-end contract tests for the repaired AI and finance dashboard paths."""
 import json
 from pathlib import Path
+from unittest.mock import patch
 
-from ai_daily_push import build_html, shape
-from finance_daily_push import build_finance_html, shape_finance, build_finance_markdown
+from ai_daily_push import build_html, shape, build_markdown, push_wecom_webhook
+from finance_daily_push import (
+    build_finance_html, shape_finance, build_finance_markdown,
+    push_wecom_news_card,
+)
 from scrapers.twitter_scraper import TwitterScraper
 from scrapers.weibo_scraper import WeiboScraper
+from wechat_content_formatter import format_ai_daily_for_wechat, format_finance_daily_for_wechat
+from wechat_official import publish_to_wechat
+from wechat_official_publisher import _standalone_article_html
 
 
 def assert_true(condition, message):
@@ -172,6 +179,83 @@ def test_scraper_status_contracts():
     print("[PASS] RSSHub failures return structured scraper statuses")
 
 
+def test_site_navigation_delivery_boundary():
+    ai_data = shape({"date": "2026-09-10", "sections": []}, market_insights=[])
+    finance_data = shape_finance([], [], [], {}, {}, {})
+
+    ai_page = build_html(ai_data)
+    finance_page = build_finance_html(finance_data)
+    for page in (ai_page, finance_page):
+        assert_true('class="global-nav"' in page,
+                    "GitHub Pages dashboard lost its global navigation")
+        assert_true('href="index.html"' in page and 'href="finance.html"' in page and
+                    'href="monitor.html"' in page,
+                    "GitHub Pages dashboard is missing a site navigation link")
+
+    ai_markdown = build_markdown(ai_data, "https://example.invalid/index.html")
+    finance_body, finance_tail = build_finance_markdown(
+        finance_data, "https://example.invalid/finance.html"
+    )
+    for outbound in (ai_markdown, finance_body + finance_tail):
+        assert_true('global-nav' not in outbound,
+                    "notification Markdown contains dashboard navigation markup")
+        assert_true('推送监控' not in outbound,
+                    "notification Markdown contains the monitor navigation item")
+
+    ai_article = format_ai_daily_for_wechat(ai_data)[1]
+    finance_article = format_finance_daily_for_wechat(finance_data)[1]
+    dashboard_fragment = '''
+    <style>.global-nav{position:fixed}.article{color:#333}</style>
+    <nav class="global-nav"><a href="index.html">AI 日报</a><a href="finance.html">财经日报</a><a href="monitor.html">推送监控</a></nav>
+    <article class="article">应保留正文</article>
+    '''
+    cleaned_legacy_article = _standalone_article_html(dashboard_fragment)
+    for article in (ai_article, finance_article, cleaned_legacy_article):
+        assert_true('global-nav' not in article,
+                    "WeChat article contains dashboard navigation markup or CSS")
+        assert_true('href="index.html"' not in article and
+                    'href="finance.html"' not in article and
+                    'href="monitor.html"' not in article,
+                    "WeChat article contains site navigation links")
+    assert_true("应保留正文" in cleaned_legacy_article,
+                "navigation sanitizer removed article content")
+
+    with patch("wechat_official.WechatOfficialPublisher") as publisher_type:
+        publisher_type.return_value.publish_article.return_value = {"publish_id": "fixture-id"}
+        publish_id = publish_to_wechat(
+            "fixture-app", "fixture-secret", "测试日报", dashboard_fragment,
+            "AI Daily Push", "测试摘要", "https://example.invalid/index.html",
+            "fixture-cover.jpg",
+        )
+    published_content = publisher_type.return_value.publish_article.call_args.kwargs["content"]
+    assert_true(publish_id == "fixture-id" and "应保留正文" in published_content,
+                "WeChat wrapper did not publish the sanitized article")
+    assert_true("global-nav" not in published_content and "推送监控" not in published_content,
+                "WeChat wrapper forwarded site navigation to the publisher")
+
+    import ai_daily_push
+    import finance_daily_push
+    captured = []
+    with patch.object(ai_daily_push, "http_post_json",
+                      side_effect=lambda url, payload: captured.append(payload) or {"errcode": 0}), \
+         patch.object(finance_daily_push, "http_post_json",
+                      side_effect=lambda url, payload: captured.append(payload) or {"errcode": 0}):
+        push_wecom_webhook("https://example.invalid/ai-hook", ai_markdown,
+                           "https://example.invalid/index.html", "AI 日报 · 9月10日")
+        push_wecom_news_card("https://example.invalid/finance-hook",
+                             "https://example.invalid/finance.html", "财经日报 · 9月10日")
+
+    assert_true(len(captured) == 2, "expected one news card per daily notification")
+    for payload in captured:
+        articles = payload.get("news", {}).get("articles", [])
+        assert_true(payload.get("msgtype") == "news" and len(articles) == 1,
+                    "WeCom notification is not a single news card")
+        visible = articles[0].get("title", "") + articles[0].get("description", "")
+        assert_true('推送监控' not in visible and 'global-nav' not in visible,
+                    "WeCom news card exposes site navigation")
+    print("[PASS] Site navigation is retained on Pages and excluded at delivery boundaries")
+
+
 def main():
     tests = [
         test_ai_translation_contract,
@@ -181,6 +265,7 @@ def main():
         test_finance_twitter_failure_contract,
         test_finance_money_flow_degraded_contract,
         test_scraper_status_contracts,
+        test_site_navigation_delivery_boundary,
     ]
     for test in tests:
         test()

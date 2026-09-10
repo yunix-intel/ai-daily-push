@@ -3988,10 +3988,11 @@ class TestRenderingAndEntrypoints(unittest.TestCase):
             self.assertIsNone(wechat_official.publish_to_wechat(
                 "id", "secret", "title", "body", "author", "digest", "url", "cover"))
 
-    def test_version_is_candidate_until_release_gates_pass(self):
+    def test_version_is_current_release(self):
         import __version__
-        self.assertEqual(__version__.__version__, "4.0.0-rc.1")
-        self.assertIn("候选", __version__.VERSION_HISTORY[__version__.__version__])
+        self.assertEqual(__version__.__version__, "4.0.1")
+        self.assertEqual(__version__.__version_info__, (4, 0, 1))
+        self.assertIn("稳定版本", __version__.VERSION_HISTORY[__version__.__version__])
 
 
 class TestAIDailyWhiteBoxPaths(unittest.TestCase):

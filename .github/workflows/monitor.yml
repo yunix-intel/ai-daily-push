@@ -28,7 +28,6 @@ jobs:
           python-version: '3.9'
 
       - name: Check main workflow status
-        id: check-main
         run: |
           python github_monitor.py \
             --repo "${{ github.repository }}" \
@@ -42,14 +41,3 @@ jobs:
           ALERT_DINGTALK_WEBHOOK: ${{ secrets.ALERT_DINGTALK_WEBHOOK }}
           ALERT_DINGTALK_SECRET: ${{ secrets.ALERT_DINGTALK_SECRET }}
           ALERT_FEISHU_WEBHOOK: ${{ secrets.ALERT_FEISHU_WEBHOOK }}
-
-      - name: Monitor result
-        if: always()
-        run: |
-          status="${{ steps.check-main.outcome }}"
-          if [ "$status" = "success" ]; then
-            echo "主任务运行正常"
-          else
-            echo "主任务检查失败或存在延迟"
-            exit 1
-          fi

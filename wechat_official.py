@@ -3,7 +3,7 @@
 """
 微信公众号发布接口 - 简化的发布函数
 """
-from wechat_official_publisher import WechatOfficialPublisher
+from wechat_official_publisher import WechatOfficialPublisher, _standalone_article_html
 
 
 def publish_to_wechat(appid, appsecret, title, content, author, digest, content_source_url, thumb_image_path):
@@ -29,7 +29,7 @@ def publish_to_wechat(appid, appsecret, title, content, author, digest, content_
             title=title,
             author=author,
             digest=digest,
-            content=content,
+            content=_standalone_article_html(content),
             thumb_image_path=thumb_image_path,
             content_source_url=content_source_url
         )
