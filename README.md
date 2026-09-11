@@ -99,12 +99,12 @@ python finance_daily_push.py --no-push
 
 ### LLM 模型分工
 
-翻译和分析用不同模型，可用 Secret 覆盖：
+翻译和分析模型均由 GitHub Secrets 或本地配置提供，代码不硬编码具体模型名称：
 
-- `OPENAI_MODEL_TRANSLATE`：默认 `deepseek-v4-flash`（批量翻译，量大要求低）
-- `OPENAI_MODEL_ANALYSIS`：默认 `gpt-5.6-sol`（总结/分析/策略，需要推理）
+- `OPENAI_MODEL_TRANSLATE`：翻译模型
+- `OPENAI_MODEL_ANALYSIS`：总结、分析和策略模型
 
-分开是因为实测 `deepseek-v4-flash` 在 57 条的分析 prompt 上会 504 超时（273s 无响应），而 gpt 系列 26s 返回。
+模型名称可在 GitHub Actions 的 Secrets 中独立调整。
 
 ## 本地调试
 

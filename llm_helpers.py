@@ -47,10 +47,10 @@ def _llm_config():
                  "https://api.openai.com/v1").strip().rstrip("/"))
     translate_model = (os.getenv("OPENAI_MODEL_TRANSLATE")
                        or cfg.get("openai_model_translate")
-                       or cfg.get("translate_model") or "deepseek-v4-flash").strip()
+                       or cfg.get("translate_model") or "").strip()
     analysis_model = (os.getenv("OPENAI_MODEL_ANALYSIS")
                       or cfg.get("openai_model_analysis")
-                      or cfg.get("analysis_model") or "gpt-5.6-sol").strip()
+                      or cfg.get("analysis_model") or "").strip()
 
     if not api_key:
         return None, None, None, None

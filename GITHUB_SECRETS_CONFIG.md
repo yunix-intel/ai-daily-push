@@ -20,15 +20,15 @@
 
 #### 3. OPENAI_MODEL_TRANSLATE (可选，推荐配置)
 - **说明**: 翻译模型名称
-- **默认值**: `deepseek-v4-flash`
-- **推荐值**: `deepseek-v4-flash` (快速、便宜)
+- **默认值**: 不在代码中设置
+- **推荐值**: 在 GitHub Secret 中配置当前可用的翻译模型
 - **用途**: 翻译国际新闻标题和摘要
-- **状态**: ⚠️ 未配置（将使用默认值）
+- **状态**: ⚠️ 未配置时不会指定模型
 
 #### 4. OPENAI_MODEL_ANALYSIS (可选，推荐配置)
 - **说明**: 分析模型名称
-- **默认值**: `gpt-5.6-sol`
-- **推荐值**: `gpt-5.6-sol` (高级推理能力)
+- **默认值**: 不在代码中设置
+- **推荐值**: 在 GitHub Secret 中配置当前可用的分析模型
 - **用途**: 
   - 市场总结
   - 市场分析（宏观、板块）
@@ -41,12 +41,12 @@
 
 ## 为什么需要分开配置两个模型？
 
-### 成本优化
-- **翻译任务**: 高频、简单，用 `deepseek-v4-flash` 省钱
+### 任务隔离
+- **翻译任务**：通过 `OPENAI_MODEL_TRANSLATE` 配置，模型名称不写入代码
   - 每天约 100+ 条新闻需要翻译
-  - 成本约为 GPT-4 的 1/50
+  - 可按网关实际提供的模型灵活调整
   
-- **分析任务**: 低频、复杂，用 `gpt-5.6-sol` 保证质量
+- **分析任务**：通过 `OPENAI_MODEL_ANALYSIS` 配置，模型名称不写入代码
   - 每天仅 5-10 次调用
   - 需要深度推理和准确判断
 
@@ -87,8 +87,8 @@ gh secret set OPENAI_API_KEY
 # 粘贴你的 API key，按 Ctrl+D 结束
 
 gh secret set OPENAI_BASE_URL -b "https://api.deepseek.com/v1"
-gh secret set OPENAI_MODEL_TRANSLATE -b "deepseek-v4-flash"
-gh secret set OPENAI_MODEL_ANALYSIS -b "gpt-5.6-sol"
+gh secret set OPENAI_MODEL_TRANSLATE
+gh secret set OPENAI_MODEL_ANALYSIS
 ```
 
 ---

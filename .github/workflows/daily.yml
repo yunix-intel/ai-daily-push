@@ -70,8 +70,8 @@ jobs:
           WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
-          OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
+          OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE }}
+          OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS }}
           DELIVERY_STATUS_FILE: ai_delivery_status.json
         run: python -u ai_daily_push.py
       - name: 上传 AI 页面和状态
@@ -123,8 +123,8 @@ jobs:
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE || 'deepseek-v4-flash' }}
-          OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS || 'gpt-5.6-sol' }}
+          OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE }}
+          OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS }}
           DELIVERY_STATUS_FILE: finance_delivery_status.json
         run: python -u finance_daily_push.py
       - name: 上传财经页面和状态

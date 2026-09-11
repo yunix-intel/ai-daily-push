@@ -32,14 +32,14 @@ try:
     with open('ai_daily_dashboard.html', 'r', encoding='utf-8') as f:
         html_content = f.read()
 
-    # 检查是否包含 text-align:justify
-    has_justify_h3 = 'text-align:justify' in html_content and '.card h3{' in html_content
-    has_justify_summary = 'text-align:justify' in html_content and '.summary{' in html_content
+    # 标题和摘要使用左对齐，避免短文本最后一行被拉伸
+    has_left_h3 = '.card h3{' in html_content and 'text-align:left' in html_content
+    has_left_summary = '.card .summary{' in html_content and 'text-align:left' in html_content
 
-    print(f"标题两端对齐: {'✓' if has_justify_h3 else '✗'}")
-    print(f"摘要两端对齐: {'✓' if has_justify_summary else '✗'}")
+    print(f"标题左对齐: {'✓' if has_left_h3 else '✗'}")
+    print(f"摘要左对齐: {'✓' if has_left_summary else '✗'}")
 
-    if has_justify_h3 and has_justify_summary:
+    if has_left_h3 and has_left_summary:
         print("\n✓ HTML 样式修复成功")
     else:
         print("\n✗ HTML 样式需要重新生成")

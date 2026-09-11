@@ -10,7 +10,7 @@ import os
 import re
 
 # 翻译任务跟着翻译模型走，与 finance_daily_push / ai_daily_push 使用同一环境变量。
-TRANSLATE_MODEL_DEFAULT = "deepseek-v4-flash"
+TRANSLATE_MODEL_DEFAULT = ""
 
 
 def _translate_model():
@@ -84,7 +84,7 @@ def _translate_batch(text, call_llm_func):
     user_prompt = f"翻译以下英文财经文章为简体中文，保持段落结构：\n\n{text}"
 
     try:
-        # 翻译走翻译模型（deepseek-v4-flash 量大且便宜），不写死模型名：
+        # 翻译模型由 OPENAI_MODEL_TRANSLATE 或配置文件提供，不在代码中写死：
         # 硬编码的模型在自建网关上不存在会直接 503，让全文翻译整体失效。
         result = call_llm_func(
             system_prompt,

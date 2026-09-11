@@ -5,6 +5,18 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [4.0.2] - 2026-09-11
+
+### 变更 ⚙️
+- 翻译模型和分析模型不再在代码或 GitHub Actions 工作流中硬编码，统一由 `OPENAI_MODEL_TRANSLATE` 和 `OPENAI_MODEL_ANALYSIS` 环境变量或配置文件提供。
+- GitHub Actions 直接读取对应 Secrets，模型名称可在 GitHub 配置中独立调整。
+- 修复 AI 与财经日报页面短标题、摘要和一般内容的两端对齐问题，统一改为左对齐，避免短文本末行拉伸。
+
+### 验证 ✅
+- 模型路由及相关覆盖测试通过。
+- 工作流 YAML、Python 编译和变更格式检查通过。
+- 未执行真实 LLM 请求；线上模型可用性由 GitHub Actions 运行结果独立验证。
+
 ## [4.0.1] - 2026-09-10
 
 ### 修复 🐛
