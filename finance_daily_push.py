@@ -781,11 +781,10 @@ def classify_sections(items, rules):
 
 # ----------------------------- LLM（OpenAI 兼容） -----------------------------
 # 两类任务分开用模型：
-#   翻译量大、要求低 -> deepseek-v4-flash（便宜快）
-#   总结/分析/策略需要推理 -> gpt-5.6-sol（实测 deepseek-v4-flash 在 57 条的分析
-#   prompt 上会 504 超时，273s 无响应；gpt 系列 26s 返回）
-MODEL_TRANSLATE_DEFAULT = "deepseek-v4-flash"
-MODEL_ANALYSIS_DEFAULT = "gpt-5.6-sol"
+#   翻译模型由 OPENAI_MODEL_TRANSLATE 环境变量或配置文件提供
+#   总结/分析/策略模型由 OPENAI_MODEL_ANALYSIS 环境变量或配置文件提供
+MODEL_TRANSLATE_DEFAULT = ""
+MODEL_ANALYSIS_DEFAULT = ""
 
 # 配置块只在首次调用时打印，见 _llm_config。
 _LLM_CONFIG_PRINTED = False

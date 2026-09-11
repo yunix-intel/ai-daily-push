@@ -562,8 +562,8 @@ class TestLLMHelpers(unittest.TestCase):
             key, base, translate, analysis = m._llm_config()
         self.assertEqual(key, "env-key")
         self.assertEqual(base, "https://api.openai.com/v1")
-        self.assertTrue(translate)
-        self.assertTrue(analysis)
+        self.assertEqual(translate, "")
+        self.assertEqual(analysis, "")
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False), \
              patch.object(m.os.path, "exists", return_value=False):
@@ -619,8 +619,8 @@ class TestLLMHelpers(unittest.TestCase):
             key, base, translate, analysis = m._llm_config()
         self.assertEqual(key, "env-key")
         self.assertTrue(base)
-        self.assertTrue(translate)
-        self.assertTrue(analysis)
+        self.assertEqual(translate, "")
+        self.assertEqual(analysis, "")
 
         config = ("key", "https://llm.invalid/v1", "translate", "analysis")
         with patch.object(m, "_llm_config", return_value=config), \
@@ -3990,8 +3990,8 @@ class TestRenderingAndEntrypoints(unittest.TestCase):
 
     def test_version_is_current_release(self):
         import __version__
-        self.assertEqual(__version__.__version__, "4.0.1")
-        self.assertEqual(__version__.__version_info__, (4, 0, 1))
+        self.assertEqual(__version__.__version__, "4.0.2")
+        self.assertEqual(__version__.__version_info__, (4, 0, 2))
         self.assertIn("稳定版本", __version__.VERSION_HISTORY[__version__.__version__])
 
 

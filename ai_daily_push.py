@@ -425,7 +425,7 @@ def translate_text(text, target="zh-CN", retries=3, terms=None):
 # MyMemory 是免费接口、按 IP 限流，逐条翻译 36 条要发 72 次请求，必然 429。
 # 配置了自建网关就走网关批量翻译：一次请求 10 条，请求数降两个数量级；
 # 没配 key 时仍回退到 MyMemory，保持无配置也能跑。
-AI_MODEL_TRANSLATE_DEFAULT = "deepseek-v4-flash"
+AI_MODEL_TRANSLATE_DEFAULT = ""
 
 AI_TRANSLATE_SYSTEM = (
     "你是专业的科技/AI 领域翻译。把用户给出的英文标题和摘要翻译成简体中文，"
@@ -441,9 +441,7 @@ _BASE_URL_WARNED = False
 def _warn_if_default_base_url(base_url, api_key):
     """没配 OPENAI_BASE_URL 时大声报警，不要静默走 api.openai.com。
 
-    默认模型名（deepseek-v4-flash）只挂在自建网关上，官方 OpenAI 没有这个模型，
-    退回官方地址不可能成功，只会把自建网关的 key 发给第三方，然后收到一句
-    含义模糊的 401。之前排查「翻译全批失败」时就被这个静默回退误导过。
+    未设置翻译模型时不主动指定模型，由 OPENAI_MODEL_TRANSLATE 或配置文件提供。
     """
     global _BASE_URL_WARNED
     if _BASE_URL_WARNED or not api_key:
@@ -1245,9 +1243,9 @@ HTML_TMPL = r"""<!DOCTYPE html>
   .card .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
   .card .idx{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#3b6fd4);color:#fff;font-weight:800;font-size:15px;flex:0 0 auto}
   .chip{font-size:12px;color:var(--muted);background:var(--chip);border:1px solid var(--border);padding:4px 10px;border-radius:999px;max-width:62%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .card h3{font-size:16.5px;font-weight:700;line-height:1.45;margin-bottom:9px;text-align:justify;text-align-last:justify;text-justify:inter-ideograph}
+  .card h3{font-size:16.5px;font-weight:700;line-height:1.45;margin-bottom:9px;text-align:left}
   .card h3 a:hover{color:var(--accent)}
-  .card .summary{font-size:14px;color:#c4ccd8;flex:1;margin-bottom:10px;text-align:justify;text-align-last:justify;text-justify:inter-ideograph}
+  .card .summary{font-size:14px;color:#c4ccd8;flex:1;margin-bottom:10px;text-align:left}
   .card .original-text{font-size:12.5px;color:var(--muted);border-top:1px solid var(--border);padding-top:10px;margin-bottom:14px}
   .card .foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
   .src{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
