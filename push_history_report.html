@@ -87,11 +87,11 @@
 
         <div class="metrics">
             <div class="metric">
-                <div class="metric-value">18</div>
+                <div class="metric-value">19</div>
                 <div class="metric-label">总推送次数</div>
             </div>
             <div class="metric">
-                <div class="metric-value">153.5分</div>
+                <div class="metric-value">152.7分</div>
                 <div class="metric-label">平均延迟</div>
             </div>
             <div class="metric">
@@ -121,6 +121,13 @@
             </thead>
             <tbody>
                 
+                <tr>
+                    <td>2026-09-15</td>
+                    <td>09:18:50</td>
+                    <td>07:00:00</td>
+                    <td class="delay-high">138.8 分钟</td>
+                </tr>
+            
                 <tr>
                     <td>2026-09-14</td>
                     <td>08:50:59</td>
@@ -251,12 +258,12 @@
         </table>
 
         <p style="margin-top: 30px; color: #666; font-size: 14px;">
-            最后更新: 2026-09-14 08:51:10 (北京时间)
+            最后更新: 2026-09-15 09:19:03 (北京时间)
         </p>
     </div>
 
     <script>
-        const chartData = [{"date": "2026-08-31", "delay": 177.7}, {"date": "2026-08-31", "delay": 199.8}, {"date": "2026-08-31", "delay": 207.4}, {"date": "2026-08-31", "delay": 211.9}, {"date": "2026-09-02", "delay": 160.8}, {"date": "2026-09-04", "delay": 121.2}, {"date": "2026-09-05", "delay": 113.8}, {"date": "2026-09-05", "delay": 176.4}, {"date": "2026-09-06", "delay": 261.5}, {"date": "2026-09-07", "delay": 110.5}, {"date": "2026-09-08", "delay": 135.5}, {"date": "2026-09-09", "delay": 137.5}, {"date": "2026-09-10", "delay": 129.0}, {"date": "2026-09-10", "delay": 163.3}, {"date": "2026-09-11", "delay": 120.0}, {"date": "2026-09-12", "delay": 118.4}, {"date": "2026-09-13", "delay": 106.5}, {"date": "2026-09-14", "delay": 111.0}];
+        const chartData = [{"date": "2026-08-31", "delay": 177.7}, {"date": "2026-08-31", "delay": 199.8}, {"date": "2026-08-31", "delay": 207.4}, {"date": "2026-08-31", "delay": 211.9}, {"date": "2026-09-02", "delay": 160.8}, {"date": "2026-09-04", "delay": 121.2}, {"date": "2026-09-05", "delay": 113.8}, {"date": "2026-09-05", "delay": 176.4}, {"date": "2026-09-06", "delay": 261.5}, {"date": "2026-09-07", "delay": 110.5}, {"date": "2026-09-08", "delay": 135.5}, {"date": "2026-09-09", "delay": 137.5}, {"date": "2026-09-10", "delay": 129.0}, {"date": "2026-09-10", "delay": 163.3}, {"date": "2026-09-11", "delay": 120.0}, {"date": "2026-09-12", "delay": 118.4}, {"date": "2026-09-13", "delay": 106.5}, {"date": "2026-09-14", "delay": 111.0}, {"date": "2026-09-15", "delay": 138.8}];
 
         const ctx = document.getElementById('delayChart').getContext('2d');
         new Chart(ctx, {
