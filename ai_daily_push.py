@@ -51,7 +51,7 @@ except ImportError:
 
 # 导入市场数据模块
 try:
-    from analyzers.market_data_aggregator import MarketDataAggregator
+    from analyzers.market_data_aggregator import MarketDataAggregator, build_token_trend
     from analyzers.market_report_formatter import MarketReportFormatter
     MARKET_DATA_AVAILABLE = True
 except ImportError as e:
@@ -1409,11 +1409,30 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
       });
       main+='</ul>';
       const tokHist=tokenUsage.history||[];
+      const tokTrend=tokenUsage.trend||{};
       if(tokHist.length>=2){
-        const first=tokHist[0],last=tokHist[tokHist.length-1];
-        const pct=(last.total_weekly_tokens/first.total_weekly_tokens-1)*100;
-        const arrow=pct>=0?'↗':'↘';
-        main+='<div style="padding:0 10px;color:var(--accent2);font-size:13px">近'+tokHist.length+'日总量：'+(first.total_weekly_tokens/1e12).toFixed(1)+'T → '+(last.total_weekly_tokens/1e12).toFixed(1)+'T（'+arrow+' '+Math.abs(pct).toFixed(1)+'%）</div>';
+        const tokVals=tokHist.map(p=>Number(p.total_weekly_tokens)).filter(v=>isFinite(v)&&v>0);
+        if(tokVals.length>=2){
+          const tw=300,th=56,tpad=4;
+          const tmn=Math.min.apply(null,tokVals),tmx=Math.max.apply(null,tokVals),tsp=(tmx-tmn)||1;
+          const tst=(tw-tpad*2)/(tokVals.length-1);
+          let tdd='';
+          tokVals.forEach((v,i)=>{tdd+=(i?'L':'M')+(tpad+i*tst).toFixed(1)+' '+(th-tpad-(v-tmn)/tsp*(th-tpad*2)).toFixed(1);});
+          const tup=tokVals[tokVals.length-1]>=tokVals[0];
+          main+='<div style="margin:6px 10px 2px"><svg viewBox="0 0 '+tw+' '+th+'" style="width:100%;height:auto;display:block"><path d="'+tdd+'" fill="none" stroke="'+(tup?'#16a34a':'#dc2626')+'" stroke-width="2"/></svg>'
+            +'<div style="display:flex;justify-content:space-between;color:var(--muted);font-size:11px"><span>'+esc(tokHist[0].date||'')+' '+(tmn/1e12).toFixed(1)+'T</span><span>近'+tokVals.length+'日周总量</span><span>'+esc(tokHist[tokHist.length-1].date||'')+' '+(tmx/1e12).toFixed(1)+'T</span></div></div>';
+        }
+        if(tokTrend.arr){
+          const arrStr=(tokTrend.arr>=1e15?(tokTrend.arr/1e15).toFixed(2)+'P':(tokTrend.arr/1e12).toFixed(1)+'T')+' tokens/年';
+          const arrChg=(tokTrend.arr_change_pct==null||tokTrend.arr_change_pct===''?'--':((tokTrend.arr_change_pct>0?'+':'')+Number(tokTrend.arr_change_pct).toFixed(2)+'%'));
+          const arrSlope=(tokTrend.slope_annualized_pct==null||tokTrend.slope_annualized_pct===''?'':(' · 窗口年化增速 '+(tokTrend.slope_annualized_pct>0?'+':'')+Number(tokTrend.slope_annualized_pct).toFixed(1)+'%'));
+          main+='<div style="padding:0 10px;color:var(--accent2);font-size:13px">ARR '+arrStr+'（环比 '+arrChg+arrSlope+'）</div>';
+        } else {
+          const first=tokHist[0],last=tokHist[tokHist.length-1];
+          const pct=(last.total_weekly_tokens/first.total_weekly_tokens-1)*100;
+          const arrow=pct>=0?'↗':'↘';
+          main+='<div style="padding:0 10px;color:var(--accent2);font-size:13px">近'+tokHist.length+'日总量：'+(first.total_weekly_tokens/1e12).toFixed(1)+'T → '+(last.total_weekly_tokens/1e12).toFixed(1)+'T（'+arrow+' '+Math.abs(pct).toFixed(1)+'%）</div>';
+        }
       }
       if(tokenUsage.note){main+='<div style="padding:0 10px 10px;color:#888;font-size:12px">'+esc(tokenUsage.note)+'</div>';}
       main+='</div>';
@@ -1723,6 +1742,7 @@ def main():
                 "list": mt.get("token_usage", []),
                 "note": mt.get("token_usage_note", ""),
                 "history": mt.get("token_history", []),
+                "trend": build_token_trend(mt.get("token_history", [])),
             }
 
             # 格式化为卡片

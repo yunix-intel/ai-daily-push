@@ -129,42 +129,57 @@ class TestTradingCalendar(unittest.TestCase):
 
 
 class TestNorthboundPostCloseFallback(unittest.TestCase):
-    def test_eastmoney_success_is_post_close(self):
+    """北向口径（2024 新规后）：盘后只披露成交总额。主链路为东财 datacenter，
+    返回 sh/sz/total_turnover（亿元）+ 日环比，绝不含净流入字段。"""
+
+    def test_datacenter_turnover_is_first_chain_link(self):
+        from scrapers.money_flow_scraper import MoneyFlowScraper
+        scraper = MoneyFlowScraper()
+        record = {"available": True, "source": "eastmoney_datacenter",
+                  "collection_mode": "post_close",
+                  "trade_date": "2026-09-03", "date": "2026-09-03",
+                  "sh_turnover": 1070.92, "sz_turnover": 1226.13,
+                  "total_turnover": 2297.05, "metric": "turnover",
+                  "reason": "", "stale": False}
+        with patch.object(scraper, "_fetch_datacenter_post_close",
+                           return_value=record) as primary:
+            with patch.object(scraper, "_fetch_eastmoney_post_close",
+                               side_effect=AssertionError("must not reach legacy")):
+                result = scraper.fetch_north_flow("2026-09-03")
+        primary.assert_called_once_with("2026-09-03")
+        self.assertTrue(result["available"])
+        self.assertEqual(result["collection_mode"], "post_close")
+        self.assertEqual(result["source"], "eastmoney_datacenter")
+        self.assertEqual(result["total_turnover"], 2297.05)
+        self.assertNotIn("total_flow", result)
+
+    def test_falls_back_to_legacy_after_datacenter_failure(self):
         from scrapers.money_flow_scraper import MoneyFlowScraper
         scraper = MoneyFlowScraper()
         payload = {"data": {
             "hk2sh": ["2026-09-03,120000000,0,0"],
             "hk2sz": ["2026-09-03,-20000000,0,0"],
         }}
-        with patch.object(scraper, "_get_json", return_value=payload):
-            result = scraper.fetch_north_flow("2026-09-03")
-        self.assertTrue(result["available"])
-        self.assertEqual(result["collection_mode"], "post_close")
-        self.assertEqual(result["source"], "eastmoney")
-        self.assertEqual(result["total_flow"], 1.0)
-
-    def test_falls_back_to_tonghuashun_after_invalid_primary(self):
-        from scrapers.money_flow_scraper import MoneyFlowScraper
-        scraper = MoneyFlowScraper()
-        with patch.object(scraper, "_fetch_eastmoney_post_close", side_effect=ValueError("invalid")):
-            with patch.object(scraper, "_fetch_10jqka_post_close", return_value={
-                "available": True, "source": "10jqka", "collection_mode": "post_close",
-                "trade_date": "2026-09-03", "date": "2026-09-03",
-                "sh_flow": 1.2, "sz_flow": -0.2, "total_flow": 1.0,
-            }) as fallback:
+        with patch.object(scraper, "_fetch_datacenter_post_close",
+                           side_effect=ValueError("datacenter down")):
+            with patch.object(scraper, "_get_json", return_value=payload):
                 result = scraper.fetch_north_flow("2026-09-03")
-        self.assertEqual(result["source"], "10jqka")
-        fallback.assert_called_once_with("2026-09-03")
+        self.assertEqual(result["source"], "eastmoney")
 
-    def test_both_sources_return_structured_failure(self):
+    def test_all_sources_return_structured_failure(self):
         from scrapers.money_flow_scraper import MoneyFlowScraper
         scraper = MoneyFlowScraper()
-        with patch.object(scraper, "_fetch_eastmoney_post_close", side_effect=TimeoutError()):
-            with patch.object(scraper, "_fetch_10jqka_post_close", side_effect=RuntimeError("blocked")):
-                with patch.object(scraper, "_load_cached_north", return_value=None):
-                    result = scraper.fetch_north_flow("2026-09-03")
+        with patch.object(scraper, "_fetch_datacenter_post_close",
+                           side_effect=TimeoutError()):
+            with patch.object(scraper, "_fetch_eastmoney_post_close",
+                               side_effect=TimeoutError()):
+                with patch.object(scraper, "_fetch_10jqka_post_close",
+                                   side_effect=RuntimeError("blocked")):
+                    with patch.object(scraper, "_load_cached_north", return_value=None):
+                        result = scraper.fetch_north_flow("2026-09-03")
         self.assertFalse(result["available"])
         self.assertEqual(result["source"], "none")
+        self.assertIn("datacenter", result["reason"])
         self.assertIn("eastmoney", result["reason"])
         self.assertIn("10jqka", result["reason"])
 
@@ -184,8 +199,10 @@ class TestNorthboundPostCloseFallback(unittest.TestCase):
             "hk2sh": ["2026-09-03,0,0,0"],
             "hk2sz": ["2026-09-03,1000000,0,0"],
         }}
-        with patch.object(scraper, "_get_json", return_value=payload):
-            result = scraper.fetch_north_flow("2026-09-03")
+        with patch.object(scraper, "_fetch_datacenter_post_close",
+                           side_effect=ValueError("datacenter down")):
+            with patch.object(scraper, "_get_json", return_value=payload):
+                result = scraper.fetch_north_flow("2026-09-03")
         self.assertTrue(result["available"])
         self.assertEqual(result["sh_flow"], 0)
         self.assertEqual(result["sz_flow"], 0.01)

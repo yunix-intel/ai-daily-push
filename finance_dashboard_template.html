@@ -469,7 +469,9 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   const hasStock = moneyFlow.stock_flow && (((moneyFlow.stock_flow.top_inflow||[]).length
                    || (moneyFlow.stock_flow.top_outflow||[]).length)
                    || moneyFlow.stock_flow.reason);
-  if(hasSector || hasStock) {
+  const nf0 = moneyFlow.north_flow;
+  const hasNorth = nf0 && (nf0.available || nf0.reason);
+  if(hasSector || hasStock || hasNorth) {
     main+='<div class="market-divider" id="money-flow-section"><h2>💰 资金流向</h2></div>';
 
     // 行业资金流向
@@ -504,6 +506,54 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
       }
       if(!sf.top_inflow?.length && !sf.top_outflow?.length && sf.reason) {
         main+='<div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">'+esc(sf.reason)+'</div>';
+      }
+      main+='</div>';
+    }
+
+    // 北向资金（盘后成交总额）：交易所 2024 年新规后盘中净流入停披，
+    // 盘后只披露成交总额。资金流看变动不看绝对值：每通道配日环比。
+    function northDelta(pct) {
+      if(pct == null || isNaN(Number(pct))) return '<span class="lbl">环比 --</span>';
+      const n = Number(pct), cls = n > 0 ? 'up' : (n < 0 ? 'down' : '');
+      return '<span class="'+cls+'" style="font-size:12px">日环比 '+(n>0?'+':'')+n.toFixed(2)+'%</span>';
+    }
+    function northSpark(points) {
+      const vals = points.map(p=>Number(p.total)).filter(v=>isFinite(v));
+      if(vals.length < 2) return '';
+      const w = 300, h = 56, pad = 4;
+      const min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+      const span = (max - min) || 1;
+      const step = (w - pad*2) / (vals.length - 1);
+      let d = '';
+      vals.forEach((v,i)=>{
+        const x = (pad + i*step).toFixed(1);
+        const y = (h - pad - (v-min)/span*(h-pad*2)).toFixed(1);
+        d += (i?'L':'M')+x+' '+y;
+      });
+      const up = vals[vals.length-1] >= vals[0];
+      return '<div style="margin:6px 0 2px"><svg viewBox="0 0 '+w+' '+h+'" style="width:100%;height:auto;display:block">'
+        +'<path d="'+d+'" fill="none" stroke="'+(up?'#16a34a':'#dc2626')+'" stroke-width="2"/></svg>'
+        +'<div style="display:flex;justify-content:space-between;color:var(--muted);font-size:11px"><span>'+esc(points[0].date)+' '+min.toFixed(0)+'亿</span><span>近'+vals.length+'个交易日成交总额</span><span>'+esc(points[points.length-1].date)+' '+max.toFixed(0)+'亿</span></div></div>';
+    }
+    if(moneyFlow.north_flow && (moneyFlow.north_flow.available || moneyFlow.north_flow.reason)) {
+      const nf = moneyFlow.north_flow;
+      main+='<div class="block"><h2>🧭 北向资金（盘后成交总额）</h2>';
+      if(nf.available && nf.total_turnover != null) {
+        main+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:10px 0">';
+        main+='<div class="stat"><span class="lbl">沪股通</span><span class="num">'+Number(nf.sh_turnover||0).toFixed(2)+' 亿</span>'+northDelta(nf.sh_change_pct)+'</div>';
+        main+='<div class="stat"><span class="lbl">深股通</span><span class="num">'+Number(nf.sz_turnover||0).toFixed(2)+' 亿</span>'+northDelta(nf.sz_change_pct)+'</div>';
+        main+='<div class="stat total"><span class="lbl">北向合计</span><span class="num">'+Number(nf.total_turnover||0).toFixed(2)+' 亿</span>'+northDelta(nf.total_change_pct)+'</div>';
+        main+='</div>';
+        const nh = moneyFlow.north_history || [];
+        if(nf.available && nh.length >= 2) {
+          main+=northSpark(nh);
+        }
+        main+='<div style="color:var(--muted);font-size:12px">口径：'+esc(nf.trade_date||nf.date||'')+'盘后成交总额'+(nf.prev_trade_date?'（环比上一有数交易日 '+esc(nf.prev_trade_date)+'）':'')+'；交易所新规后仅披露成交总额，不再披露净流入</div>';
+        if(nf.stale) {
+          main+='<div style="color:#b45309;font-size:12px;margin-top:6px">⚠️ 实时数据不可用，显示最近有效交易日的缓存</div>';
+        }
+      } else if(nf.reason) {
+        main+='<div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">北向资金暂不可用：'+esc(nf.reason)+'</div>';
       }
       main+='</div>';
     }

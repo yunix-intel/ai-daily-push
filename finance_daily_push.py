@@ -1609,8 +1609,7 @@ def build_finance_markdown(data, dashboard_url):
 
     money_flow = data.get("moneyFlow") or {}
     flow_lines = []
-    # 北向已砍：只剩行业/个股。有数写数字（最强/最弱各 1 条，省字节），
-    # 无数写 reason/error，一行都不静默。
+    # 北向（盘后成交总额口径）：有数写总额一行，无数写 reason，一行都不静默。
     for label, key in (("行业", "sector_flow"), ("个股", "stock_flow")):
         flow = money_flow.get(key) or {}
         inflow = flow.get("top_inflow") or []
@@ -1624,6 +1623,19 @@ def build_finance_markdown(data, dashboard_url):
             flow_lines.append(f"{label}资金流向最强/最弱：{'；'.join(parts)}")
         elif flow.get("reason") or flow.get("error"):
             flow_lines.append(f"{label}资金：{flow.get('reason') or flow.get('error')}")
+    north = money_flow.get("north_flow") or {}
+    if north.get("available") and north.get("total_turnover") is not None:
+        total_pct = north.get("total_change_pct")
+        pct_text = (f"{total_pct:+.2f}%"
+                    if isinstance(total_pct, (int, float)) and not isinstance(total_pct, bool)
+                    else "--")
+        flow_lines.append(
+            f"北向成交总额（{north.get('trade_date', '')}盘后）："
+            f"{north.get('total_turnover', 0):.2f}亿，日环比{pct_text}"
+            f"（沪{north.get('sh_turnover', 0):.2f}/"
+            f"深{north.get('sz_turnover', 0):.2f}；仅披露成交总额）")
+    elif north.get("reason") or north.get("error"):
+        flow_lines.append(f"北向资金：{north.get('reason') or north.get('error')}")
     if flow_lines:
         lines.append("\n## 💰 资金流向")
         lines.extend(f"> {note}" for note in flow_lines)
@@ -1762,19 +1774,35 @@ def main():
                 print(f"     [WARN] {label}获取失败，跳过该板块：{exc!r}")
                 return fallback
 
-        # 北向资金已砍：交易所停止披露后只剩占位零值/历史 kline，不再抓取不再展示。
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="money-flow") as executor:
+        # 北向资金（盘后成交总额）：盘中净流入已停披，盘后只披露成交总额。
+        # 主链路为东财 datacenter，失败时 scraper 内部按链路降级，最终给
+        # available=False + reason，页面/正文如实展示原因，不编造数字。
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="money-flow") as executor:
             sector_future = executor.submit(lambda: scraper.fetch_sector_flow(top_n=5))
             stock_future = executor.submit(lambda: scraper.fetch_stock_flow(top_n=10))
+            north_future = executor.submit(scraper.fetch_north_flow)
             sector_flow = _safe_fetch("行业资金流向", sector_future.result,
                                       {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
             stock_flow = _safe_fetch("个股资金流向", stock_future.result,
                                      {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
+            north_flow = _safe_fetch("盘后北向资金", north_future.result,
+                                     {"available": False, "reason": "数据抓取失败"})
 
         money_flow_data = {
             "sector_flow": sector_flow,
-            "stock_flow": stock_flow
+            "stock_flow": stock_flow,
+            "north_flow": north_flow,
         }
+        try:
+            history = scraper.get_turnover_history() or []
+            money_flow_data["north_history"] = [
+                {"date": str(point.get("date", "")),
+                 "total": float(point.get("total", 0))}
+                for point in history if isinstance(point, dict)
+            ]
+        except Exception as exc:
+            print(f"     [WARN] 北向历史曲线读取失败：{exc}")
+            money_flow_data["north_history"] = []
 
         if sector_flow and sector_flow.get('top_inflow'):
             print(f"     行业流入 Top 1：{sector_flow['top_inflow'][0].get('name', 'N/A')}"
@@ -1782,6 +1810,14 @@ def main():
         if stock_flow and stock_flow.get('top_inflow'):
             print(f"     个股流入 Top 1：{stock_flow['top_inflow'][0].get('name', 'N/A')}"
                   f"（{stock_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）")
+        if north_flow and north_flow.get('available') \
+                and north_flow.get('total_turnover') is not None:
+            print(f"     北向成交总额：{north_flow.get('total_turnover', 0):.2f} 亿"
+                  f"（{north_flow.get('trade_date', '')}盘后，"
+                  f"沪{north_flow.get('sh_turnover', 0):.2f}/"
+                  f"深{north_flow.get('sz_turnover', 0):.2f}）")
+        elif north_flow and (north_flow.get('reason') or north_flow.get('error')):
+            print(f"     北向资金暂不可用：{north_flow.get('reason') or north_flow.get('error')}")
 
     except ImportError as e:
         print(f"     [ERROR] 资金流向模块导入失败：{e}")
@@ -1790,14 +1826,16 @@ def main():
         # 添加降级显示
         money_flow_data = {
             "sector_flow": {"top_inflow": [], "top_outflow": [], "error": "模块导入失败"},
-            "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "模块导入失败"}
+            "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "模块导入失败"},
+            "north_flow": {"available": False, "reason": "模块导入失败"}
         }
     except Exception as e:
         print(f"     [WARN] 资金流向抓取失败，继续执行：{e!r}")
         # 添加降级显示
         money_flow_data = {
             "sector_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"},
-            "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"}
+            "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"},
+            "north_flow": {"available": False, "reason": "数据抓取失败"}
         }
 
     print("[1.6/6] 抓取追踪博主观点 ...")

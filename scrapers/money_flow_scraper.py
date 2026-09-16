@@ -56,7 +56,11 @@ class MoneyFlowScraper:
 
     @staticmethod
     def _valid_cache_date(trade_date, target_date):
-        """Accept only real ISO dates not later than the requested session."""
+        """只认请求当日（target）的缓存。
+
+        2026-09-16 线上实证：放宽到 <= target 会把 13 天前的旧快照
+        当成北向展示。从此宁缺毋滥：日期对不上就当没缓存。
+        """
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", trade_date):
             return False
         try:
@@ -64,7 +68,7 @@ class MoneyFlowScraper:
             date.fromisoformat(str(target_date))
         except ValueError:
             return False
-        return trade_date <= str(target_date)
+        return trade_date == str(target_date)
 
     def _save_cached_north(self, record):
         """Persist only a successful, non-sensitive northbound observation."""
@@ -80,8 +84,12 @@ class MoneyFlowScraper:
         records = [r for r in records if isinstance(r, dict) and
                    str(r.get("trade_date") or r.get("date") or "") != trade_date]
         records.append({k: record.get(k) for k in (
-            "date", "trade_date", "sh_flow", "sz_flow", "total_flow",
-            "available", "collection_mode", "source", "reason", "stale"
+            "date", "trade_date", "prev_trade_date",
+            "sh_flow", "sz_flow", "total_flow",
+            "sh_turnover", "sz_turnover", "total_turnover",
+            "sh_change_pct", "sz_change_pct", "total_change_pct",
+            "metric", "available", "collection_mode", "source",
+            "reason", "stale"
         )})
         try:
             self.cache_path.write_text(
@@ -92,6 +100,34 @@ class MoneyFlowScraper:
             # Cache persistence is best effort; a live observation must still
             # be returned when the runner filesystem is read-only.
             return
+
+    def get_turnover_history(self, days=30):
+        """北向成交总额历史序列（页面曲线用）：读本地缓存，只收有效总额点。
+
+        缓存按交易日去重保留近 30 条，每日跑批自然累积成序列；不足 2 点
+        时调用方隐藏曲线，只展示单日数字+环比。
+        """
+        try:
+            payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return []
+        records = payload if isinstance(payload, list) else [payload]
+        points = []
+        for record in records:
+            if not isinstance(record, dict) or not record.get("available"):
+                continue
+            day = str(record.get("trade_date") or record.get("date") or "")
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                continue
+            try:
+                total = float(record.get("total_turnover"))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(total) or total <= 0:
+                continue
+            points.append({"date": day, "total": round(total, 2)})
+        points.sort(key=lambda point: point["date"])
+        return points[-days:]
 
     def _get_json(self, path, params):
         """按 host 列表依次尝试，第一个成功返回 JSON 的即用。全挂则抛最后一个异常。"""
@@ -131,14 +167,17 @@ class MoneyFlowScraper:
         return data['data']['diff']
 
     def fetch_north_flow(self, target_date=None):
-        """【已废弃】北向资金整块已砍：交易所停止披露后只剩占位零值。
+        """北向资金盘后成交总额（东财 datacenter 为主链路）。
 
-        方法保留仅供旧单测回归，生产流程（finance_daily_push）不再调用，
-        新代码不得使用。如需恢复，先解决数据源问题再删此标记。
+        披露口径（2024 年新规后）：盘中实时净流入停披；盘后只披露成交总额
+        （+十大活跃股），净流入连盘后都不再披露。因此本方法只返回成交总额，
+        字段为 sh_turnover/sz_turnover/total_turnover（亿元），绝不编造净流入。
+        链路：datacenter → eastmoney kamt → 10jqka → 当日缓存 → 空。
         """
         target = self._resolve_target_date(target_date)
         errors = []
-        for source, fetcher in (("eastmoney", self._fetch_eastmoney_post_close),
+        for source, fetcher in (("datacenter", self._fetch_datacenter_post_close),
+                                ("eastmoney", self._fetch_eastmoney_post_close),
                                 ("10jqka", self._fetch_10jqka_post_close)):
             try:
                 result = fetcher(target)
@@ -151,7 +190,7 @@ class MoneyFlowScraper:
                 errors.append(f"{source}:{type(exc).__name__}")
         cached = self._load_cached_north(target)
         if cached:
-            cached["attempted_sources"] = ["eastmoney", "10jqka", "cache"]
+            cached["attempted_sources"] = ["datacenter", "eastmoney", "10jqka", "cache"]
             return cached
         return self._empty_north_flow(
             "；".join(errors) or "东方财富和同花顺均未返回有效盘后数据"
@@ -168,6 +207,87 @@ class MoneyFlowScraper:
             return get_last_trading_day(current).isoformat()
         except Exception:
             return current.isoformat()
+
+    def _fetch_datacenter_post_close(self, target_date):
+        """东财 datacenter 陆股通成交历史（RPT_MUTUAL_DEAL_HISTORY）。
+
+        通道：001=沪股通，003=深股通，005=北向合计。北向三通道只有 DEAL_AMT
+        （成交总额）有数，BUY/SELL/NET 全空——符合交易所新规，不是故障。
+        金额单位：均笔成交交叉验证为百万元（DEAL_AMT/DEAL_NUM≈0.042 即
+        4.2万元/笔；若为万元则仅 422 元/笔，不合理），转亿元除以 100。
+        取不晚于 target 的最新有数交易日，trade_date 如实标注。
+        """
+        url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        params = {"sortColumns": "TRADE_DATE,MUTUAL_TYPE", "sortTypes": "-1,-1",
+                  "pageSize": "60", "pageNumber": "1",
+                  "reportName": "RPT_MUTUAL_DEAL_HISTORY",
+                  "columns": "TRADE_DATE,MUTUAL_TYPE,DEAL_AMT,DEAL_NUM",
+                  "source": "WEB", "client": "WEB"}
+        response = requests.get(url, params=params, headers=self.headers,
+                                timeout=self.timeout)
+        response.raise_for_status()
+        rows = (response.json().get("result") or {}).get("data") or []
+        by_date = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            day = str(row.get("TRADE_DATE") or "")[:10]
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                continue
+            if day > str(target_date):
+                continue
+            by_date.setdefault(day, {})[str(row.get("MUTUAL_TYPE"))] = row
+        if not by_date:
+            raise ValueError("盘后成交记录为空")
+        trade_dates = sorted(by_date, reverse=True)
+        trade_date = trade_dates[0]
+        day_rows = by_date[trade_date]
+
+        def _turnover(rows, code):
+            value = (rows.get(code) or {}).get("DEAL_AMT")
+            if not isinstance(value, (int, float)) \
+                    or not math.isfinite(value) or value < 0:
+                return None
+            return round(value / 100, 2)
+
+        sh_turnover = _turnover(day_rows, "001")
+        sz_turnover = _turnover(day_rows, "003")
+        if sh_turnover is None or sz_turnover is None:
+            raise ValueError("当日沪/深通道无有效成交总额")
+        total_raw = _turnover(day_rows, "005")
+        if total_raw is not None:
+            total_turnover = total_raw
+        else:
+            total_turnover = round(sh_turnover + sz_turnover, 2)
+
+        # 资金流看变动不看绝对值：往前找上一个双通道有数的交易日，算日环比。
+        prev_date, sh_prev, sz_prev, total_prev = None, None, None, None
+        for day in trade_dates[1:]:
+            rows = by_date[day]
+            sh_prev, sz_prev = _turnover(rows, "001"), _turnover(rows, "003")
+            if sh_prev is None or sz_prev is None:
+                continue
+            tp = _turnover(rows, "005")
+            total_prev = tp if tp is not None else round(sh_prev + sz_prev, 2)
+            prev_date = day
+            break
+
+        def _pct(now, before):
+            if before is None or before == 0:
+                return None
+            return round((now - before) / before * 100, 2)
+
+        return {"date": trade_date, "trade_date": trade_date,
+                "prev_trade_date": prev_date,
+                "sh_turnover": sh_turnover, "sz_turnover": sz_turnover,
+                "total_turnover": total_turnover,
+                "sh_change_pct": _pct(sh_turnover, sh_prev),
+                "sz_change_pct": _pct(sz_turnover, sz_prev),
+                "total_change_pct": _pct(total_turnover, total_prev),
+                "available": True,
+                "collection_mode": "post_close",
+                "source": "eastmoney_datacenter",
+                "metric": "turnover", "reason": "", "stale": False}
 
     def _fetch_eastmoney_post_close(self, target_date):
         params = {'fields1': 'f1,f2,f3,f4', 'fields2': 'f51,f52,f53,f54,f55,f56',

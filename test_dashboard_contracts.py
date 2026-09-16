@@ -137,8 +137,9 @@ def test_finance_twitter_failure_contract():
     print("[PASS] Twitter source failure reaches finance dashboard HTML")
 
 
-def test_finance_money_flow_no_north_contract():
-    """北向已砍：payload 不得含 north_flow；行业数字进 HTML 和微信正文，缺数原因直显。"""
+def test_finance_money_flow_north_turnover_contract():
+    """北向（盘后成交总额口径）：payload 含 north_flow；成交总额进 HTML 和微信正文，
+    只提成交总额不编净流入；缺数时 reason 直显。"""
     money_flow = {
         "sector_flow": {
             "top_inflow": [{"name": "银行", "net_inflow": 12.34, "change_pct": 1.2, "net_ratio": 0.5}],
@@ -147,21 +148,65 @@ def test_finance_money_flow_no_north_contract():
         },
         "stock_flow": {"top_inflow": [], "top_outflow": [],
                         "available": False, "reason": "东方财富返回盘前占位或无效个股资金数据"},
+        "north_flow": {
+            "date": "2026-09-15", "trade_date": "2026-09-15",
+            "prev_trade_date": "2026-09-14",
+            "sh_turnover": 1070.92, "sz_turnover": 1226.13,
+            "total_turnover": 2297.05, "available": True,
+            "sh_change_pct": -4.47, "sz_change_pct": -2.98,
+            "total_change_pct": -3.68,
+            "collection_mode": "post_close", "source": "eastmoney_datacenter",
+            "metric": "turnover", "reason": "", "stale": False,
+        },
     }
     data = shape_finance([], [], {}, {}, {}, {}, money_flow_data=money_flow)
-    assert_true("north_flow" not in (data.get("moneyFlow") or {}),
-                "northbound flow was not removed from finance payload")
+    north = (data.get("moneyFlow") or {}).get("north_flow") or {}
+    assert_true(north.get("available") is True,
+                "northbound turnover was dropped from finance payload")
+    assert_true(north.get("total_turnover") == 2297.05,
+                "northbound total_turnover value was dropped")
     html = build_finance_html(data)
+    assert_true("北向合计" in html and "2297.05" in html,
+                "northbound turnover numbers are missing from finance HTML")
+    assert_true("成交总额" in html,
+                "northbound block must state turnover semantics, not net inflow")
+    assert_true("日环比" in html and '"total_change_pct"' in html
+                and "-3.68" in html,
+                "northbound day-over-day change data is missing from finance HTML")
     assert_true("银行" in html and "12.34" in html,
                 "sector inflow numbers are missing from finance HTML")
     assert_true("盘前占位" in html,
                 "stock unavailable reason is missing from finance HTML")
     body, _ = build_finance_markdown(data, "")
+    assert_true("北向成交总额" in body and "2297.05" in body,
+                "northbound turnover line is missing from Markdown body")
+    assert_true("日环比-3.68%" in body,
+                "northbound day-over-day change is missing from Markdown body")
     assert_true("银行" in body and "12.34" in body,
                 "sector inflow numbers are missing from Markdown body")
     assert_true("个股资金" in body and "盘前占位" in body,
                 "stock unavailable reason is missing from Markdown body")
-    print("[PASS] Money-flow (no northbound) numbers and reasons reach HTML and Markdown")
+    print("[PASS] Money-flow (northbound turnover) numbers and reasons reach HTML and Markdown")
+
+
+def test_finance_money_flow_north_unavailable_contract():
+    """北向暂不可用：reason 进 HTML 和微信正文，不编数字。"""
+    money_flow = {
+        "sector_flow": {"top_inflow": [], "top_outflow": [],
+                        "available": False, "reason": "行业资金数据暂不可用"},
+        "stock_flow": {"top_inflow": [], "top_outflow": [],
+                       "available": False, "reason": "个股资金数据暂不可用"},
+        "north_flow": {"available": False, "trade_date": None,
+                       "reason": "节假日休市，交易所未发布盘后成交数据"},
+    }
+    data = shape_finance([], [], {}, {}, {}, {}, money_flow_data=money_flow)
+    html = build_finance_html(data)
+    assert_true("北向资金暂不可用" in html,
+                "northbound unavailable reason is missing from finance HTML")
+    body, _ = build_finance_markdown(data, "")
+    assert_true("北向资金" in body and "交易所未发布" in body,
+                "northbound unavailable reason is missing from Markdown body")
+    print("[PASS] Northbound unavailability reason reaches HTML and Markdown")
 
 def test_scraper_status_contracts():
     from scrapers.twitter_scraper import TwitterScraper
@@ -357,7 +402,8 @@ def main():
         test_ai_market_fallback_contract,
         test_finance_twitter_contract,
         test_finance_twitter_failure_contract,
-        test_finance_money_flow_no_north_contract,
+        test_finance_money_flow_north_turnover_contract,
+        test_finance_money_flow_north_unavailable_contract,
         test_ai_token_usage_contract,
         test_finance_strategy_fallback_contract,
         test_scraper_status_contracts,

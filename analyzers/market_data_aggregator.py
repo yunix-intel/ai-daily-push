@@ -47,6 +47,44 @@ def build_token_history(data_dir=None, days=7):
     return points
 
 
+def build_token_trend(history):
+    """Token 趋势指标：周环比、ARR（年化运行率）及其斜率。
+
+    ARR = 最新周总量 × 52（把单周网关吞吐外推成年化口径，便于跨期比较量级）；
+    ARR 斜率 = ARR 相对上一有效点的变化率（×52 在除法中约掉，数值上等于
+    相邻两点的周环比，这里如实标注，不包装成新概念）；
+    3 点以上再给最小二乘日斜率的年化增速，反映窗口内趋势陡峭程度。
+    点不足 2 个时返回空字典，调用方隐藏趋势行，绝不编造斜率。
+    """
+    pts = [p for p in (history or [])
+           if isinstance(p, dict)
+           and isinstance(p.get("total_weekly_tokens"), (int, float))
+           and p["total_weekly_tokens"] > 0
+           and not isinstance(p.get("total_weekly_tokens"), bool)]
+    if len(pts) < 2:
+        return {}
+    first, last = pts[0], pts[-1]
+    wow_pct = round((last["total_weekly_tokens"] / first["total_weekly_tokens"] - 1) * 100, 2)
+    arr = last["total_weekly_tokens"] * 52
+    prev_arr = pts[-2]["total_weekly_tokens"] * 52
+    trend = {"wow_pct": wow_pct, "arr": arr,
+             "arr_change_pct": (round((arr / prev_arr - 1) * 100, 2)
+                                if prev_arr else None),
+             "window_days": len(pts),
+             "start_date": first.get("date", ""),
+             "end_date": last.get("date", "")}
+    if len(pts) >= 3:
+        n = len(pts)
+        mean_x = (n - 1) / 2
+        mean_y = sum(p["total_weekly_tokens"] for p in pts) / n
+        denom = sum((x - mean_x) ** 2 for x in range(n))
+        if denom and mean_y:
+            slope = sum((x - mean_x) * (p["total_weekly_tokens"] - mean_y)
+                        for x, p in zip(range(n), pts)) / denom
+            trend["slope_annualized_pct"] = round(slope * 365 / mean_y * 100, 2)
+    return trend
+
+
 class MarketDataAggregator:
     """市场数据聚合器"""
 
