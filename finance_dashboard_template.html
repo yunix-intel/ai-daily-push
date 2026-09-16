@@ -463,7 +463,6 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   }
 
   const moneyFlow = DATA.moneyFlow || {};
-  // 北向已砍：不再抓取不再展示，只剩行业/个股。
   const hasSector = moneyFlow.sector_flow && (((moneyFlow.sector_flow.top_inflow||[]).length
                     || (moneyFlow.sector_flow.top_outflow||[]).length)
                     || moneyFlow.sector_flow.reason);

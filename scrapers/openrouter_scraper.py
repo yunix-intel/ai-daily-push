@@ -25,10 +25,15 @@ class OpenRouterScraper(BaseScraper):
         """抓取完整的 OpenRouter 数据（增强版）"""
         print("  抓取 OpenRouter 数据...")
 
-        # 先尝试加载缓存
+        # 先尝试加载缓存；旧代码快照缺 token 用量时视为过期（AA 同款逻辑），
+        # 否则当日产物永远沿用旧快照、Token 块永久隐藏（2026-09-16 线上实证）。
         cached = self.load_cache("openrouter")
         if cached:
-            return cached
+            if not (cached.get("token_usage")
+                    and cached.get("total_weekly_tokens")):
+                print("     [WARN] 当日缓存缺 token 用量（旧代码快照），忽略并重新直抓")
+            else:
+                return cached
 
         try:
             # 1. 从 API 获取模型列表和价格
