@@ -137,29 +137,31 @@ def test_finance_twitter_failure_contract():
     print("[PASS] Twitter source failure reaches finance dashboard HTML")
 
 
-def test_finance_money_flow_degraded_contract():
+def test_finance_money_flow_no_north_contract():
+    """北向已砍：payload 不得含 north_flow；行业数字进 HTML 和微信正文，缺数原因直显。"""
     money_flow = {
-        "north_flow": {
-            "available": True, "stale": True, "trade_date": "2026-09-04",
-            "sh_flow": 1.0, "sz_flow": -0.2, "total_flow": 0.8,
-            "reason": "实时数据不可用，显示最近有效交易日 2026-09-04 的缓存",
+        "sector_flow": {
+            "top_inflow": [{"name": "银行", "net_inflow": 12.34, "change_pct": 1.2, "net_ratio": 0.5}],
+            "top_outflow": [{"name": "医药", "net_inflow": -5.0, "change_pct": -0.8, "net_ratio": -0.3}],
+            "available": True, "reason": "",
         },
-        "sector_flow": {"top_inflow": [], "top_outflow": [],
-                        "available": False, "reason": "行业数据暂不可用"},
         "stock_flow": {"top_inflow": [], "top_outflow": [],
-                        "available": False, "reason": "个股数据暂不可用"},
+                        "available": False, "reason": "东方财富返回盘前占位或无效个股资金数据"},
     }
     data = shape_finance([], [], {}, {}, {}, {}, money_flow_data=money_flow)
+    assert_true("north_flow" not in (data.get("moneyFlow") or {}),
+                "northbound flow was not removed from finance payload")
     html = build_finance_html(data)
+    assert_true("银行" in html and "12.34" in html,
+                "sector inflow numbers are missing from finance HTML")
+    assert_true("盘前占位" in html,
+                "stock unavailable reason is missing from finance HTML")
     body, _ = build_finance_markdown(data, "")
-    assert_true("2026-09-04" in html and "缓存" in html,
-                "stale northbound provenance is missing from HTML")
-    assert_true("行业数据暂不可用" in html and "个股数据暂不可用" in html,
-                "sector/stock unavailable reasons are missing from HTML")
-    assert_true("行业资金：行业数据暂不可用" in body and
-                "个股资金：个股数据暂不可用" in body,
-                "money-flow unavailable reasons are missing from Markdown body")
-    print("[PASS] Money-flow stale and unavailable states reach HTML and Markdown")
+    assert_true("银行" in body and "12.34" in body,
+                "sector inflow numbers are missing from Markdown body")
+    assert_true("个股资金" in body and "盘前占位" in body,
+                "stock unavailable reason is missing from Markdown body")
+    print("[PASS] Money-flow (no northbound) numbers and reasons reach HTML and Markdown")
 
 def test_scraper_status_contracts():
     from scrapers.twitter_scraper import TwitterScraper
@@ -256,6 +258,98 @@ def test_site_navigation_delivery_boundary():
     print("[PASS] Site navigation is retained on Pages and excluded at delivery boundaries")
 
 
+def test_ai_token_usage_contract():
+    """直抓 Token 用量（非新闻抽取）必须完整穿过 shape()，供页面 Token/份额块渲染。"""
+    payload = {
+        "total_weekly_tokens": 80.92e12,
+        "list": [{"model": "GPT-5.6 Luna", "weekly_tokens_display": "17.4T",
+                  "weekly_tokens": 17.4e12, "market_share": 21.5,
+                  "wow_direction": "positive", "wow_change": "21%"}],
+        "note": "OpenRouter 网关口径",
+    }
+    data = shape({"sections": []}, token_usage=payload)
+    tu = data.get("tokenUsage") or {}
+    assert_true(tu.get("total_weekly_tokens") == 80.92e12,
+                "tokenUsage total was dropped by shape()")
+    assert_true((tu.get("list") or [{}])[0].get("market_share") == 21.5,
+                "tokenUsage shares were dropped by shape()")
+    assert_true("网关" in (tu.get("note") or ""),
+                "tokenUsage caliber note was dropped by shape()")
+    html = build_html(data)
+    # JS 按 tokenUsage.list 长度决定整块显隐：有数渲染、无数隐藏。
+    # 合约锁的是 payload 必须带齐渲染所需的全部键（页面行为由浏览器执行，单测覆盖数据侧）。
+    row = (tu.get("list") or [{}])[0]
+    for key in ("model", "weekly_tokens_display", "market_share",
+                "wow_direction", "wow_change"):
+        assert_true(key in row, f"tokenUsage row is missing {key} for rendering")
+    assert_true("GPT-5.6 Luna" in html and "OpenRouter 网关口径" in html,
+                "tokenUsage payload is absent from dashboard HTML")
+    empty_tu = (shape({"sections": []}, token_usage={}).get("tokenUsage") or {})
+    assert_true((empty_tu.get("list") or []) == [],
+                "empty tokenUsage must carry an empty list so the block hides")
+    print("[PASS] Direct-captured token usage reaches shaped AI data")
+
+
+def test_finance_strategy_fallback_contract():
+    """空分析/空策略必须是机器可判读的，且交易日字段要穿透到页面 payload。"""
+    from finance_daily_push import ANALYSIS_FALLBACK, STRATEGY_FALLBACK
+    assert_true(ANALYSIS_FALLBACK.get("ok") is False,
+                "ANALYSIS_FALLBACK lacks machine-readable ok:false")
+    assert_true(STRATEGY_FALLBACK.get("ok") is False,
+                "STRATEGY_FALLBACK lacks machine-readable ok:false")
+    strategy = dict(STRATEGY_FALLBACK)
+    strategy["last_trading_day"] = "9月12日"
+    strategy["is_trading_day"] = True
+    data = shape_finance([], [], [], {}, {}, strategy)
+    sg = data.get("strategy") or {}
+    assert_true(sg.get("lastTradingDay") == "9月12日",
+                "strategy lastTradingDay was dropped by shape_finance()")
+    assert_true(sg.get("isTradingDay") is True,
+                "strategy isTradingDay was dropped by shape_finance()")
+    print("[PASS] Strategy fallback is machine-readable and preserves trading-day fields")
+
+
+def test_push_standalone_contract():
+    """推送落地页无导航、Pages 版保留导航，卡片外链必须指向无导航版。"""
+    from ai_daily_push import derive_push_dashboard_url
+    assert_true(derive_push_dashboard_url(
+        "https://example.pages.dev/ai_daily_dashboard.html")
+        == "https://example.pages.dev/ai_push_standalone.html",
+        "AI push URL derivation is wrong")
+    assert_true(derive_push_dashboard_url(
+        "https://example.pages.dev/finance_dashboard.html")
+        == "https://example.pages.dev/finance_push_standalone.html",
+        "finance push URL derivation is wrong")
+    assert_true(derive_push_dashboard_url("") == "",
+                "empty dashboard URL must stay empty")
+    assert_true(derive_push_dashboard_url("https://example.pages.dev/x.html")
+                == "https://example.pages.dev/x_push_standalone.html",
+                "generic .html derivation is wrong")
+
+    pages_html = build_html(shape({"sections": []}))
+    push_html = build_html(shape({"sections": []}), standalone=True)
+    assert_true("<nav" in pages_html, "Pages AI dashboard lost its navigation")
+    assert_true("<nav" not in push_html,
+                "push landing page still contains navigation")
+    fin_pages = build_finance_html(shape_finance([], [], [], {}, {}, {}))
+    fin_push = build_finance_html(shape_finance([], [], [], {}, {}, {}),
+                                  standalone=True)
+    assert_true("<nav" in fin_pages, "Pages finance dashboard lost its navigation")
+    assert_true("<nav" not in fin_push,
+                "finance push landing page still contains navigation")
+
+    captured = []
+    push_url = derive_push_dashboard_url("https://example.pages.dev/index.html")
+    import ai_daily_push
+    with patch.object(ai_daily_push, "http_post_json",
+                      side_effect=lambda url, payload: captured.append(payload) or {"errcode": 0}):
+        push_wecom_webhook("https://example.invalid/hook", "md", push_url, "AI 日报")
+    assert_true(captured[0]["news"]["articles"][0]["url"].endswith(
+        "index_push_standalone.html"),
+        "WeCom card does not point at the navigation-free landing page")
+    print("[PASS] Push landing pages are navigation-free and card-linked")
+
+
 def main():
     tests = [
         test_ai_translation_contract,
@@ -263,9 +357,12 @@ def main():
         test_ai_market_fallback_contract,
         test_finance_twitter_contract,
         test_finance_twitter_failure_contract,
-        test_finance_money_flow_degraded_contract,
+        test_finance_money_flow_no_north_contract,
+        test_ai_token_usage_contract,
+        test_finance_strategy_fallback_contract,
         test_scraper_status_contracts,
         test_site_navigation_delivery_boundary,
+        test_push_standalone_contract,
     ]
     for test in tests:
         test()

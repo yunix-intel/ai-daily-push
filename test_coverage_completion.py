@@ -852,59 +852,39 @@ class TestArtificialAnalysisCoverageCompletion(unittest.TestCase):
     def test_fetch_parser_fallback_chain_and_public_entrypoint(self):
         module_name = "scrapers.artificial_analysis_scraper"
         scraper = self.scraper_class()
-        html = "<html><body><table><tr><th>Model</th><th>Value</th></tr>" \
-               "<tr><td>Fast</td><td>250 tokens/s</td></tr></table></body></html>"
-        with patch.object(scraper, "load_cache", return_value=None), \
-             patch.object(scraper, "save_cache") as save, \
-             patch(f"{module_name}.urllib.request.urlopen", return_value=FakeResponse(html)):
+        html = ("<html><body>"
+                '<script type="application/ld+json">{"@type": "Dataset", "name": "Speed", "data": ['
+                '{"label": "Fast Model (max)", "medianOutputSpeed": 250}]}</script>'
+                "</body></html>")
+        with (
+            patch.object(scraper, "load_cache", return_value=None),
+            patch.object(scraper, "save_cache") as save,
+            patch(module_name + ".urllib.request.urlopen", return_value=FakeResponse(html)),
+        ):
             result = scraper.fetch_benchmarks()
         self.assertEqual(result["speed"][0]["tokens_per_sec"], 250)
         save.assert_called_once()
 
-        with patch(f"{module_name}.ArtificialAnalysisScraper") as scraper_type:
+        with patch(module_name + ".ArtificialAnalysisScraper") as scraper_type:
             scraper_type.return_value.fetch_benchmarks.return_value = {"source": "fixture"}
             from scrapers.artificial_analysis_scraper import fetch_aa_data
             self.assertEqual(fetch_aa_data(), {"source": "fixture"})
-
     def test_highlight_script_and_table_edge_paths(self):
-        from bs4 import BeautifulSoup
-
         scraper = self.scraper_class()
-        result = {"intelligence": [], "speed": [], "cost": []}
-        matches = [
-            [("GPT", "0"), ("Claude", "99"), ("Gemini", "100")],
-            [("Slow", "10"), ("Fast", "11")],
-            [("Bad", "bad"), ("Free", "0"), ("Good", "0.5"), ("High", "10")],
-        ]
-        with patch("scrapers.artificial_analysis_scraper.re.findall", side_effect=matches):
-            scraper._parse_highlights(MagicMock(get_text=MagicMock(return_value="text")), result)
-        self.assertEqual(result["intelligence"], [{"model": "Claude", "score": 99}])
-        self.assertEqual(result["speed"], [{"model": "Fast", "tokens_per_sec": 11}])
-        self.assertEqual(result["cost"], [{"model": "Good", "cost_per_task": 0.5}])
-
-        script_html = """<script></script><script>
-        {"model":"A","score":1}{"name":"B","speed":2}
-        {"name":"C","cost":3}{"model":"D","other":4}{"model":"broken",}
-        </script>"""
-        scripted = {"intelligence": [], "speed": [], "cost": []}
-        scraper._parse_from_scripts(BeautifulSoup(script_html, "html.parser"), scripted)
-        self.assertEqual(len(scripted["intelligence"]), 1)
-        self.assertEqual(len(scripted["speed"]), 1)
-        self.assertEqual(len(scripted["cost"]), 1)
-
-        table_html = """<table>
-        <tr><th>Model</th><th>Value</th></tr>
-        <tr><td>short</td></tr><tr><td>bad</td><td>n/a</td></tr>
-        <tr><td>speed</td><td>101</td></tr><tr><td>cost</td><td>0.5</td></tr>
-        <tr><td>score</td><td>50</td></tr>
-        </table>"""
-        tabled = {"intelligence": [], "speed": [], "cost": []}
-        scraper._parse_tables(BeautifulSoup(table_html, "html.parser"), tabled)
-        self.assertEqual(tabled["speed"][0]["tokens_per_sec"], 101)
-        self.assertEqual(tabled["cost"][0]["cost_per_task"], 0.5)
-        self.assertEqual(tabled["intelligence"][0]["score"], 50)
-
-
+        html = ("<html><head>"
+                '<script type="application/ld+json">{"@type": "Dataset", "name": "Intelligence", "data": ['
+                '{"label": "Claude Fable 5.1 (max)", "artificialAnalysisIntelligenceIndex": 53.4},'
+                '{"label": "Claude Fable 5.1 (max)", "artificialAnalysisIntelligenceIndex": 53.4},'
+                '{"label": "Qwen", "artificialAnalysisIntelligenceIndex": 999},'
+                '{"label": "Bad", "artificialAnalysisIntelligenceIndex": "high"}'
+                "]}</script></head>"
+                "<body>Qwen 3 GPT 6</body></html>")
+        result = scraper.parse_homepage(html)
+        self.assertTrue(result["parsed"])
+        self.assertEqual([r["model"] for r in result["intelligence"]],
+                         ["Claude Fable 5.1 (max)"])
+        self.assertEqual(scraper.parse_homepage("<html></html>")["parsed"], False)
+        self.assertFalse(type(scraper)._is_usable_cache({}))
 class TestPushHistoryCoverageCompletion(unittest.TestCase):
     def test_history_normalization_and_time_edges(self):
         import push_history_recorder as recorder_module

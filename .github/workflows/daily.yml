@@ -81,6 +81,7 @@ jobs:
           name: ai-daily-output
           path: |
             ai_daily_dashboard.html
+            ai_push_standalone.html
             ai_delivery_status.json
             translations
           if-no-files-found: warn
@@ -97,14 +98,6 @@ jobs:
           python-version: '3.11'
       - name: 安装 Python 依赖
         run: python -m pip install --disable-pip-version-check -r requirements.txt
-      - name: 恢复财经资金流向缓存
-        uses: actions/cache@v5
-        with:
-          path: data/market_data/money_flow_north.json
-          key: finance-money-flow-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            finance-money-flow-${{ github.ref_name }}-
-            finance-money-flow-
       - name: 恢复财经翻译缓存
         uses: actions/cache@v5
         with:
@@ -134,6 +127,7 @@ jobs:
           name: finance-daily-output
           path: |
             finance_dashboard.html
+            finance_push_standalone.html
             finance_delivery_status.json
           if-no-files-found: warn
 
@@ -229,6 +223,17 @@ jobs:
             cp finance-output/finance_dashboard.html public/finance.html
           else
             echo "::warning::财经页面缺失"
+          fi
+          # 推送专用无导航落地页（企业微信卡片外链目标，不在站内导航里挂入口）
+          if [ -f ai-output/ai_push_standalone.html ]; then
+            cp ai-output/ai_push_standalone.html public/ai_push_standalone.html
+          else
+            echo "::warning::AI 推送落地页缺失"
+          fi
+          if [ -f finance-output/finance_push_standalone.html ]; then
+            cp finance-output/finance_push_standalone.html public/finance_push_standalone.html
+          else
+            echo "::warning::财经推送落地页缺失"
           fi
           if [ -f push_history_report.html ]; then cp push_history_report.html public/push_history.html; fi
           if [ -f monitor.html ]; then cp monitor.html public/monitor.html; fi

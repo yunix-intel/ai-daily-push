@@ -825,8 +825,11 @@ def _llm_config():
             # 静默回退到官方地址不可能成功，只会把网关 key 发给第三方并收到 401。
             print("  [WARN] 未设置 OPENAI_BASE_URL，正在请求官方 api.openai.com；")
             print("         若 key 属于自建网关，调用会全部 401 失败。")
-        print(f"  翻译模型: {translate_model} (用于新闻标题/摘要翻译)")
-        print(f"  分析模型: {analysis_model} (用于市场总结/策略建议)")
+        print(f"  翻译模型: {translate_model or '(未配置)'} (用于新闻标题/摘要翻译)")
+        print(f"  分析模型: {analysis_model or '(未配置)'} (用于市场总结/策略建议)")
+        if not analysis_model:
+            print("  [WARN] 分析模型为空：请检查 OPENAI_MODEL_ANALYSIS Secret 或 push_config.json；")
+            print("         为空时分析/策略/博主观点将直接进兜底，不会发 LLM 请求。")
         print("="*60 + "\n")
 
     return api_key, base_url, translate_model, analysis_model
@@ -842,7 +845,9 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
     api_key, base_url, translate_model, analysis_model = _llm_config()
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
-    resolved_model = model or translate_model
+    resolved_model = (model or translate_model or "").strip()
+    if not resolved_model:
+        raise RuntimeError("未配置 LLM 模型（OPENAI_MODEL_ANALYSIS/OPENAI_MODEL_TRANSLATE 均为空）")
     semaphore = _ANALYSIS_SEMAPHORE if resolved_model == analysis_model else _DEEPSEEK_SEMAPHORE
     payload = {
         "model": resolved_model,
@@ -1051,6 +1056,18 @@ STRATEGY_SYSTEM = (
 )
 
 
+def is_post_holiday_session(trading_status):
+    """节后首日判据：日历 flag 或距上一交易日 >= 3 天。
+
+    trading_calendar 的 is_post_holiday 数的是「非交易日天数」
+    （普通周末只有 2 天，不算节后）；而周一距上周五必然 3 天，
+    休市期间攒了两天以上外围消息，值得单独回顾。判据抽成函数，
+    供 generate_strategy 和单测共用，避免两处写法漂移。
+    """
+    return bool(trading_status.get('is_post_holiday')
+                or trading_status.get('days_since_last_trading', 0) >= 3)
+
+
 def generate_strategy(analysis, quotes, trading_status=None):
     """
     生成策略建议
@@ -1068,12 +1085,9 @@ def generate_strategy(analysis, quotes, trading_status=None):
     market_status = trading_status['market_status']
     last_trading_day = trading_status['last_trading_day']
     # 「要不要写假期回顾」和「要不要拉长收集窗口」必须用同一个判据，
-    # 否则会出现周一拉了 72 小时新闻、却因为 is_post_holiday=False 而不写回顾的割裂：
-    # trading_calendar 的 is_post_holiday 数的是「非交易日天数」（周末只有 2 天不算节后），
-    # 而收集窗口数的是 days_since_last_trading（周一必然是 3）。
-    # 只要距上一交易日 >= 3 天，休市期间就攒了两天以上的外围消息，值得单独回顾。
-    is_post_holiday = (trading_status['is_post_holiday']
-                       or trading_status['days_since_last_trading'] >= 3)
+    # 否则会出现周一拉了 72 小时新闻、却因为 is_post_holiday=False 而不写回顾的割裂。
+    # 判据定义见 is_post_holiday_session()。
+    is_post_holiday = is_post_holiday_session(trading_status)
 
     # 准备突发事件文本
     events = analysis.get("emergencyEvents") or []
@@ -1177,12 +1191,14 @@ def generate_strategy(analysis, quotes, trading_status=None):
 
 
 ANALYSIS_FALLBACK = {
+    "ok": False,
     "emergencyEvents": [],
     "summary": "（本次未生成 AI 分析：LLM 未配置或调用失败，下方要闻列表仍为完整抓取结果。）",
     "macro": "",
     "sector": "",
 }
 STRATEGY_FALLBACK = {
+    "ok": False,
     "aShare": "",
     "hkShare": "",
     "risk": "本次策略分析未生成。" + DISCLAIMER,
@@ -1463,6 +1479,7 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
             "holidaySummary": strategy.get("holiday_summary", ""),
             "isPostHoliday": bool(strategy.get("is_post_holiday")),
             "lastTradingDay": strategy.get("last_trading_day", ""),
+            "isTradingDay": strategy.get("is_trading_day", True),
         },
         # 追踪博主的观点摘要。与 analysis 分开：analysis 是对新闻事实的归纳，
         # 这里是个人判断，页面上必须让读者一眼看出是「谁的看法」。
@@ -1481,7 +1498,37 @@ def shape_finance(sections_domestic, sections_international, quotes, analysis_do
 
 
 
-def build_finance_html(data):
+def strip_push_nav(html):
+    """去掉推送落地页的站内导航（global-nav + 板块 nav），内容与脚本不动。
+
+    navLinks 容器删掉后，原 `getElementById('navLinks').innerHTML=nav` 会拿到
+    null 使整段 render 抛错，所以一并改成守卫写法。
+    """
+    html = re.sub(r'<nav class="global-nav">.*?</nav>', '', html, flags=re.S)
+    html = re.sub(r'<nav class="nav">.*?</nav>', '', html, flags=re.S)
+    return html.replace(
+        "document.getElementById('navLinks').innerHTML=nav;",
+        "var _nl=document.getElementById('navLinks');if(_nl){_nl.innerHTML=nav;}")
+
+
+def derive_push_dashboard_url(dashboard_url):
+    """把 Pages 版仪表盘地址推导成推送专用无导航落地页地址。
+
+    空输入回空字符串，保持与现有 dashboard_url 配置兼容。
+    """
+    url = (dashboard_url or "").strip()
+    if not url:
+        return ""
+    for full, push in (("ai_daily_dashboard.html", "ai_push_standalone.html"),
+                       ("finance_dashboard.html", "finance_push_standalone.html")):
+        if url.endswith(full):
+            return url[: -len(full)] + push
+    if url.lower().endswith(".html"):
+        return url[:-len(".html")] + "_push_standalone.html"
+    return url
+
+
+def build_finance_html(data, standalone=False):
     """生成财经日报 HTML，使用外部模板文件。"""
     # "</" 转义成 "<\/"：标题里若含字面 </script> 会提前闭合脚本标签导致注入。
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
@@ -1491,7 +1538,8 @@ def build_finance_html(data):
     with open(template_path, "r", encoding="utf-8") as f:
         template = f.read()
 
-    return template.replace("__DATA_PLACEHOLDER__", payload)
+    html = template.replace("__DATA_PLACEHOLDER__", payload)
+    return strip_push_nav(html) if standalone else html
 
 # ----------------------------- Markdown 推送正文 -----------------------------
 def build_finance_markdown(data, dashboard_url):
@@ -1560,14 +1608,25 @@ def build_finance_markdown(data, dashboard_url):
             lines.append(f"\n**市场总结**\n> {an_intl['summary']}")
 
     money_flow = data.get("moneyFlow") or {}
-    flow_notes = []
-    for label, key in (("北向", "north_flow"), ("行业", "sector_flow"), ("个股", "stock_flow")):
+    flow_lines = []
+    # 北向已砍：只剩行业/个股。有数写数字（最强/最弱各 1 条，省字节），
+    # 无数写 reason/error，一行都不静默。
+    for label, key in (("行业", "sector_flow"), ("个股", "stock_flow")):
         flow = money_flow.get(key) or {}
-        if flow.get("reason") and not flow.get("available", bool(flow.get("top_inflow") or flow.get("top_outflow"))):
-            flow_notes.append(f"{label}资金：{flow['reason']}")
-    if flow_notes:
-        lines.append("\n## 💰 资金流向状态")
-        lines.extend(f"> {note}" for note in flow_notes)
+        inflow = flow.get("top_inflow") or []
+        outflow = flow.get("top_outflow") or []
+        if inflow or outflow:
+            parts = []
+            if inflow:
+                parts.append(f"{inflow[0].get('name', '')} {inflow[0].get('net_inflow', 0):+.2f}亿")
+            if outflow:
+                parts.append(f"{outflow[0].get('name', '')} {outflow[0].get('net_inflow', 0):+.2f}亿")
+            flow_lines.append(f"{label}资金流向最强/最弱：{'；'.join(parts)}")
+        elif flow.get("reason") or flow.get("error"):
+            flow_lines.append(f"{label}资金：{flow.get('reason') or flow.get('error')}")
+    if flow_lines:
+        lines.append("\n## 💰 资金流向")
+        lines.extend(f"> {note}" for note in flow_lines)
 
     body = "\n".join(lines)
 
@@ -1695,8 +1754,7 @@ def main():
         from scrapers.money_flow_scraper import MoneyFlowScraper
         scraper = MoneyFlowScraper()
 
-        # 三路各自独立兜底：北向已被交易所停止披露，若与板块/个股共用一个
-        # try，任何一路报错都会把另两路已抓到的数据一起丢掉（问题10 的表现之一）。
+        # 两路各自独立兜底：行业/个股任何一路报错都不能把另一路已抓到的数据丢掉。
         def _safe_fetch(label, fetch, fallback):
             try:
                 return fetch()
@@ -1704,28 +1762,20 @@ def main():
                 print(f"     [WARN] {label}获取失败，跳过该板块：{exc!r}")
                 return fallback
 
-        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="money-flow") as executor:
-            north_future = executor.submit(scraper.fetch_north_flow)
+        # 北向资金已砍：交易所停止披露后只剩占位零值/历史 kline，不再抓取不再展示。
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="money-flow") as executor:
             sector_future = executor.submit(lambda: scraper.fetch_sector_flow(top_n=5))
             stock_future = executor.submit(lambda: scraper.fetch_stock_flow(top_n=10))
-            north_flow = _safe_fetch("盘后北向资金", north_future.result,
-                                     {"available": False, "source": "none", "collection_mode": "post_close",
-                                      "error": "数据抓取失败", "reason": "盘后东方财富和同花顺均未返回有效数据"})
             sector_flow = _safe_fetch("行业资金流向", sector_future.result,
                                       {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
             stock_flow = _safe_fetch("个股资金流向", stock_future.result,
                                      {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"})
 
         money_flow_data = {
-            "north_flow": north_flow,
             "sector_flow": sector_flow,
             "stock_flow": stock_flow
         }
 
-        if north_flow.get('available'):
-            print(f"     北向资金合计：{north_flow.get('total_flow', 0):+.2f} 亿元")
-        else:
-            print("     盘后北向资金：东方财富和同花顺均未返回有效数据")
         if sector_flow and sector_flow.get('top_inflow'):
             print(f"     行业流入 Top 1：{sector_flow['top_inflow'][0].get('name', 'N/A')}"
                   f"（{sector_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）")
@@ -1739,7 +1789,6 @@ def main():
         print(f"            运行: pip install beautifulsoup4")
         # 添加降级显示
         money_flow_data = {
-            "north_flow": {"available": False, "error": "模块导入失败"},
             "sector_flow": {"top_inflow": [], "top_outflow": [], "error": "模块导入失败"},
             "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "模块导入失败"}
         }
@@ -1747,7 +1796,6 @@ def main():
         print(f"     [WARN] 资金流向抓取失败，继续执行：{e!r}")
         # 添加降级显示
         money_flow_data = {
-            "north_flow": {"available": False, "error": "数据抓取失败"},
             "sector_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"},
             "stock_flow": {"top_inflow": [], "top_outflow": [], "error": "数据抓取失败"}
         }
@@ -1950,8 +1998,8 @@ def main():
 
     print(f"     交易日状态：{trading_status['market_status']}")
     print(f"     上一交易日：{format_date_cn(trading_status['last_trading_day'])}")
-    if trading_status['is_post_holiday']:
-        print(f"     节后首日：连续休市 {trading_status['days_since_last_trading']} 天")
+    if is_post_holiday_session(trading_status):
+        print(f"     节后/休市后首日：距上一交易日 {trading_status['days_since_last_trading']} 天")
 
     # 策略需要综合国内外分析
     if analysis_domestic_ok or analysis_international_ok:
@@ -1967,9 +2015,12 @@ def main():
             print(f"     A股 {len(strategy.get('aShare',''))} 字，港股 {len(strategy.get('hkShare',''))} 字")
         except Exception as exc:
             strategy = dict(STRATEGY_FALLBACK)
+            strategy["last_trading_day"] = format_date_cn(trading_status.get("last_trading_day"))
+            strategy["is_trading_day"] = trading_status.get("market_status") not in ("weekend", "holiday")
             print(f"     [!] 策略生成失败，使用占位文案：{exc!r}")
     else:
         strategy = dict(STRATEGY_FALLBACK)
+        strategy["last_trading_day"] = format_date_cn(trading_status.get("last_trading_day"))
         print("     跳过：上一步分析未生成")
 
     data = shape_finance(sections_domestic, sections_international, quotes,
@@ -1986,8 +2037,14 @@ def main():
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(build_finance_html(data))
     print(f"     已写入 {out_html}")
+    # 推送专用无导航落地页：Pages 版保留导航，企业微信卡片/正文链接用无导航版。
+    out_push_html = os.path.join(HERE, "finance_push_standalone.html")
+    with open(out_push_html, "w", encoding="utf-8") as f:
+        f.write(build_finance_html(data, standalone=True))
+    print(f"     已写入 {out_push_html}")
+    push_url = derive_push_dashboard_url(dashboard_url) or dashboard_url
 
-    body, tail = build_finance_markdown(data, dashboard_url)
+    body, tail = build_finance_markdown(data, push_url)
     preview = compose_markdown(body, tail, 3900)
     print(f"     Markdown 正文 {len(body.encode('utf-8'))} 字节 + 保留尾部 {len(tail.encode('utf-8'))} 字节"
           f" -> 实际发送 {len(preview.encode('utf-8'))} 字节")
@@ -1995,10 +2052,10 @@ def main():
     if args.no_push:
         print("[5/5] --no-push：跳过推送。")
         print("—— 图文卡片模式预览 ——")
-        if dashboard_url:
+        if push_url:
             print(f"标题: 💹 查看完整财经日报（网页版）")
             print(f"描述: 财经日报 · 股指 · 突发事件 · 市场分析 · 策略建议 · 点击打开")
-            print(f"链接: {dashboard_url}")
+            print(f"链接: {push_url}")
         else:
             print("（未配置 dashboard_url，无法发送图文卡片）")
         return
@@ -2019,7 +2076,7 @@ def main():
         title = f"财经日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         try:
             # 财经日报保持纯 news 卡片；卡片只指向财经页，不混入 AI 或监控链接。
-            resp = push_wecom_news_card(webhook, dashboard_url, title_prefix=title) if dashboard_url else push_markdown(webhook, body, tail)
+            resp = push_wecom_news_card(webhook, push_url, title_prefix=title) if push_url else push_markdown(webhook, body, tail)
             print("     企业微信返回：", resp)
             delivery_succeeded = isinstance(resp, dict) and resp.get("errcode", 0) == 0
             delivery_failure = "" if delivery_succeeded else "api_rejected"
@@ -2034,7 +2091,7 @@ def main():
         print("[5/5] 推送财经日报到飞书群机器人 ...")
         title = f"财经日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         try:
-            resp = push_feishu_markdown(feishu_webhook, title, body, tail, dashboard_url)
+            resp = push_feishu_markdown(feishu_webhook, title, body, tail, push_url)
             print("     飞书返回：", resp)
         except Exception as exc:
             print("     [!] 飞书推送异常：", repr(exc))
@@ -2070,7 +2127,7 @@ def main():
                     appid=wechat_appid, appsecret=wechat_appsecret,
                     title=article_title, content=article_content,
                     author="AI Daily Push", digest=article_digest,
-                    content_source_url=dashboard_url, thumb_image_path=cover_path
+                    content_source_url=push_url, thumb_image_path=cover_path
                 )
                 print(f"     公众号发布结果：{publish_id or '失败'}")
             else:

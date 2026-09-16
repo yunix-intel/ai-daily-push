@@ -30,12 +30,17 @@ class MarketReportFormatter:
         if market_card:
             cards.append(market_card)
 
-        # 卡片 3: 性能基准（Artificial Analysis）
+        # 卡片 3: Token 用量与份额（OpenRouter 直抓：近一周网关 token，不走新闻抽取）
+        token_card = self._format_token_usage(aggregated_data.get("market_trends", {}))
+        if token_card:
+            cards.append(token_card)
+
+        # 卡片 4: 性能基准（Artificial Analysis）
         performance_card = self._format_performance(aggregated_data)
         if performance_card:
             cards.append(performance_card)
 
-        # 卡片 4: 交叉验证
+        # 卡片 5: 交叉验证
         validation_card = self._format_cross_validation(
             aggregated_data.get("cross_validation", {})
         )
@@ -120,6 +125,50 @@ class MarketReportFormatter:
             "subtitle": "来自 OpenRouter",
             "content": "\n".join(items),
             "source": "OpenRouter API"
+        }
+
+    def _format_token_usage(self, market_trends):
+        """格式化 Token 用量与份额（OpenRouter 网关直抓，不走新闻抽取）"""
+        usage = market_trends.get("token_usage", []) or []
+        if not usage:
+            return None
+
+        total = market_trends.get("total_weekly_tokens", 0)
+        items = [f"• 近一周网关总量：约 {total / 1e12:.1f}T tokens（Top{len(usage)} 加总）"]
+        items.append(f"Top {min(5, len(usage))} 份额：")
+        arrow = {"positive": "↗", "negative": "↘", "flat": "—"}
+        for i, u in enumerate(usage[:5], 1):
+            items.append(
+                f"  {i}. {u.get('model', '未知')} {u.get('weekly_tokens_display', '')} "
+                f"· {u.get('market_share', 0)}% "
+                f"{arrow.get(u.get('wow_direction'), '')}{u.get('wow_change', '')}"
+            )
+
+        note = market_trends.get("token_usage_note", "")
+        if note:
+            items.append(f"\n口径：{note}")
+
+        history = market_trends.get("token_history", []) or []
+        if len(history) >= 2:
+            first, last = history[0], history[-1]
+            pct = (last["total_weekly_tokens"] / first["total_weekly_tokens"] - 1) * 100
+            items.append(
+                f"\n近{len(history)}日总量走势："
+                f"{first['total_weekly_tokens'] / 1e12:.1f}T → "
+                f"{last['total_weekly_tokens'] / 1e12:.1f}T"
+                f"（{pct:+.1f}%）"
+            )
+            first_top = {t["model"]: t["market_share"] for t in first.get("top", [])}
+            drifts = [f"{t['model']} {first_top[t['model']]}%→{t['market_share']}%"
+                      for t in last.get("top", []) if t["model"] in first_top]
+            if drifts:
+                items.append("头部份额漂移：" + "；".join(drifts))
+
+        return {
+            "title": "🪙 Token 用量与份额",
+            "subtitle": "来自 OpenRouter（直抓）",
+            "content": "\n".join(items),
+            "source": "OpenRouter Rankings"
         }
 
     def _format_performance(self, aggregated_data):

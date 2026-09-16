@@ -365,6 +365,15 @@ table{{width:100%;border-collapse:collapse;margin-top:20px}}th,td{{padding:10px;
             raise Exception(f"URL Error: {exc.reason}") from exc
 
 
+def exit_code_for_state(state):
+    """Monitor 退出码：只有 missing/failed 让 workflow 失败。
+
+    success-but-late 的调度延迟只发 WARNING 告警（alert=True），
+    退出码保持 0，避免把一次成功的日报标成 "all jobs failed"。
+    """
+    return 1 if state in ("missing", "failed") else 0
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="GitHub Actions 推送监测")
@@ -393,7 +402,7 @@ def main():
             # A scheduling warning must not turn a successful daily run into an
             # "all jobs failed" monitor email.  Reserve non-zero status for a
             # missing run, a genuinely failed/cancelled run, or monitor errors.
-            return 1 if state in ("missing", "failed") else 0
+            return exit_code_for_state(state)
         runs = monitor.get_recent_runs(args.limit)
         report = monitor.analyze_delays(runs)
         print(f"运行: {report['total_runs']}；计划: {report['scheduled_runs']}；手工: {report['manual_runs']}")

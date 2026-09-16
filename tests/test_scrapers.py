@@ -68,12 +68,14 @@ class TestScrapers(unittest.TestCase):
         # Phase A3 增强字段验证
         self.assertIn('date', data)
 
-        # 数据质量验证
+        # 数据质量验证（真实 Intelligence Index 是小数，如 53.4；旧断言只认 int，
+        # 恰好把垃圾整数当合法、把真数当失败，改成数值型 + 范围校验）
         if len(data.get('intelligence', [])) > 0:
             intel = data['intelligence'][0]
             self.assertIn('model', intel)
             self.assertIn('score', intel)
-            self.assertIsInstance(intel['score'], int)
+            self.assertIsInstance(intel['score'], (int, float))
+            self.assertTrue(10 <= intel['score'] <= 100)
 
         print(f"[OK] Artificial Analysis data fetch test passed")
         print(f"  - Date: {data.get('date', 'N/A')}")
@@ -136,7 +138,9 @@ class TestCacheFiles(unittest.TestCase):
             with open(cache_file, 'r', encoding='utf-8') as f:
                 try:
                     data = json.load(f)
-                    self.assertIsInstance(data, dict)
+                    # 北向缓存（money_flow_north.json）按设计存的是最近 30 条
+                    # 记录的列表，其余快照是单个 dict，两者都合法。
+                    self.assertIsInstance(data, (dict, list))
                 except json.JSONDecodeError as e:
                     self.fail(f"{cache_file.name} 不是有效的 JSON: {e}")
 

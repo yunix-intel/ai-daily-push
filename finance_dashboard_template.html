@@ -463,46 +463,15 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   }
 
   const moneyFlow = DATA.moneyFlow || {};
-  const north = moneyFlow.north_flow || {};
-  const showNorth = north.available && north.total_flow !== undefined;
-  const hasNorthStatus = !showNorth && (north.reason || north.error || north.collection_mode === 'post_close');
+  // 北向已砍：不再抓取不再展示，只剩行业/个股。
   const hasSector = moneyFlow.sector_flow && (((moneyFlow.sector_flow.top_inflow||[]).length
                     || (moneyFlow.sector_flow.top_outflow||[]).length)
                     || moneyFlow.sector_flow.reason);
   const hasStock = moneyFlow.stock_flow && (((moneyFlow.stock_flow.top_inflow||[]).length
                    || (moneyFlow.stock_flow.top_outflow||[]).length)
                    || moneyFlow.stock_flow.reason);
-  if(showNorth || hasNorthStatus || hasSector || hasStock) {
+  if(hasSector || hasStock) {
     main+='<div class="market-divider" id="money-flow-section"><h2>💰 资金流向</h2></div>';
-
-    // 北向资金
-    if(showNorth) {
-      const nf = moneyFlow.north_flow;
-      const totalCls = nf.total_flow > 0 ? 'up' : (nf.total_flow < 0 ? 'down' : '');
-      const shCls = nf.sh_flow > 0 ? 'up' : (nf.sh_flow < 0 ? 'down' : '');
-      const szCls = nf.sz_flow > 0 ? 'up' : (nf.sz_flow < 0 ? 'down' : '');
-      main+='<div class="block"><h2>🔺 北向资金</h2>';
-      if(nf.stale) main+='<div style="color:var(--muted);font-size:13px;margin-top:6px">⚠️ '+esc(nf.reason || ('实时数据不可用，显示 '+(nf.trade_date || nf.date || '最近交易日')+' 的缓存'))+'</div>';
-      main+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">';
-      main+='<div style="background:var(--card);padding:15px;border-radius:8px;text-align:center">';
-      main+='<div style="color:var(--muted);font-size:13px;margin-bottom:6px">沪股通</div>';
-      main+='<div class="'+shCls+'" style="font-size:20px;font-weight:600">'+(nf.sh_flow>0?'+':'')+nf.sh_flow.toFixed(2)+' 亿</div>';
-      main+='</div>';
-      main+='<div style="background:var(--card);padding:15px;border-radius:8px;text-align:center">';
-      main+='<div style="color:var(--muted);font-size:13px;margin-bottom:6px">深股通</div>';
-      main+='<div class="'+szCls+'" style="font-size:20px;font-weight:600">'+(nf.sz_flow>0?'+':'')+nf.sz_flow.toFixed(2)+' 亿</div>';
-      main+='</div>';
-      main+='<div style="background:var(--card);padding:15px;border-radius:8px;text-align:center">';
-      main+='<div style="color:var(--muted);font-size:13px;margin-bottom:6px">合计</div>';
-      main+='<div class="'+totalCls+'" style="font-size:20px;font-weight:600">'+(nf.total_flow>0?'+':'')+nf.total_flow.toFixed(2)+' 亿</div>';
-      main+='</div>';
-      main+='</div></div>';
-    }
-    // 北向不可用时渲染说明行，避免读者误以为抓取失败
-    else if(moneyFlow.north_flow && !moneyFlow.north_flow.available && (moneyFlow.north_flow.reason || moneyFlow.north_flow.error)) {
-      main+='<div class="block"><div style="color:var(--muted);font-size:13px;padding:12px;background:var(--card);border-radius:8px">';
-      main+='🔵 盘后北向资金：'+esc(moneyFlow.north_flow.reason || moneyFlow.north_flow.error)+'</div></div>';
-    }
 
     // 行业资金流向
     if(moneyFlow.sector_flow && (moneyFlow.sector_flow.top_inflow || moneyFlow.sector_flow.top_outflow)) {

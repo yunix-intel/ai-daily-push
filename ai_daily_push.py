@@ -1093,7 +1093,7 @@ def _format_trend_cards(trends, start_idx=1):
     return cards
 
 
-def shape(report, market_insights=None, news_metrics=None):
+def shape(report, market_insights=None, news_metrics=None, token_usage=None):
     sections, gi = [], 0
     flat_for_ranking = []
     # 全文翻译要抓原文网页，几十条顺序抓同一批域名会被 429 限流
@@ -1194,7 +1194,8 @@ def shape(report, market_insights=None, news_metrics=None):
         "meta": meta,
         "sections": sections,
         "highlights": highlights,
-        "newsMetrics": news_metrics or {}
+        "newsMetrics": news_metrics or {},
+        "tokenUsage": token_usage or {}
     }
 
 # ----------------------------- HTML 生成 -----------------------------
@@ -1316,6 +1317,8 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
   let nav='';sections.forEach((s,i)=>{nav+='<a href="#sec-'+i+'">'+esc(s.label)+'<b>'+s.items.length+'</b></a>';});
   // 添加新闻指标导航（如果有数据）
   const newsMetrics=DATA.newsMetrics||{};
+  // OpenRouter 直抓的周 token 用量（总量 + 分模型份额 + 环比），不再用新闻抽取
+  const tokenUsage=DATA.tokenUsage||{};
   const hasMetrics=Object.values(newsMetrics).some(arr=>arr&&arr.length>0);
   if(hasMetrics){nav+='<a href="#metrics-section">📊 行业数据<b>•</b></a>';}
   document.getElementById('navLinks').innerHTML=nav;
@@ -1392,38 +1395,28 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
       main+='</ul></div>';
     }
 
-    // Token 使用量
-    if(newsMetrics.Token使用量&&newsMetrics.Token使用量.length>0){
-      main+='<div class="block"><h2>🔢 Token 使用量</h2><ul style="list-style:none;padding:0">';
-      newsMetrics.Token使用量.forEach(m=>{
-        const company=esc(m.company||'');
-        const name=esc(m.metric_name||'');
-        const val=m.value||0;
-        const unit=m.unit||'';
-        let valStr='';
-        if(unit.toLowerCase().includes('tokens')){
-          valStr=val>=1e12?(val/1e12).toFixed(1)+'T tokens':val>=1e9?(val/1e9).toFixed(1)+'B tokens':val.toLocaleString()+' tokens';
-        }else{
-          valStr=val.toLocaleString()+' '+unit;
-        }
-        const ctx=m.context?'（'+esc(m.context)+'）':'';
-        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+'</li>';
+    // Token 使用量与份额：OpenRouter 直抓（DATA.tokenUsage），空数据时整块隐藏
+    const tokenList=tokenUsage.list||[];
+    if(tokenList.length>0){
+      const totalTok=tokenUsage.total_weekly_tokens||0;
+      const totalStr=totalTok>=1e12?(totalTok/1e12).toFixed(1)+'T tokens':totalTok>=1e9?(totalTok/1e9).toFixed(1)+'B tokens':Number(totalTok).toLocaleString('en-US')+' tokens';
+      main+='<div class="block"><h2>🪙 Token 使用量与份额</h2><div style="padding:10px;color:var(--accent);font-size:18px;font-weight:700">近一周 '+totalStr+'</div><ul style="list-style:none;padding:0">';
+      tokenList.forEach(m=>{
+        const arrow=m.wow_direction==='positive'?'↗':(m.wow_direction==='negative'?'↘':'→');
+        const wow=m.wow_change&&m.wow_change!=='N/A'?(' '+arrow+' '+esc(String(m.wow_change))):'';
+        const share=(m.market_share!=null&&m.market_share!=='')?(' 份额 '+m.market_share+'%'):'';
+        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+esc(m.model||'')+'</span> <span style="color:var(--accent);font-size:18px;font-weight:700">'+esc(m.weekly_tokens_display||'')+'</span>'+share+wow+'</li>';
       });
-      main+='</ul></div>';
-    }
-
-    // 市场份额
-    if(newsMetrics.市场份额&&newsMetrics.市场份额.length>0){
-      main+='<div class="block"><h2>📈 市场份额</h2><ul style="list-style:none;padding:0">';
-      newsMetrics.市场份额.forEach(m=>{
-        const company=esc(m.company||'');
-        const name=esc(m.metric_name||'');
-        const val=m.value||0;
-        const valStr=(val*100).toFixed(1)+'%';
-        const ctx=m.context?'（'+esc(m.context)+'）':'';
-        main+='<li style="padding:10px;border-bottom:1px solid var(--border)"><span style="color:var(--accent2);font-weight:600">'+company+'</span> '+name+' <span style="color:var(--accent);font-size:18px;font-weight:700">'+valStr+'</span> '+ctx+'</li>';
-      });
-      main+='</ul></div>';
+      main+='</ul>';
+      const tokHist=tokenUsage.history||[];
+      if(tokHist.length>=2){
+        const first=tokHist[0],last=tokHist[tokHist.length-1];
+        const pct=(last.total_weekly_tokens/first.total_weekly_tokens-1)*100;
+        const arrow=pct>=0?'↗':'↘';
+        main+='<div style="padding:0 10px;color:var(--accent2);font-size:13px">近'+tokHist.length+'日总量：'+(first.total_weekly_tokens/1e12).toFixed(1)+'T → '+(last.total_weekly_tokens/1e12).toFixed(1)+'T（'+arrow+' '+Math.abs(pct).toFixed(1)+'%）</div>';
+      }
+      if(tokenUsage.note){main+='<div style="padding:0 10px 10px;color:#888;font-size:12px">'+esc(tokenUsage.note)+'</div>';}
+      main+='</div>';
     }
     // 定价 / 成本变化
     // news_metrics_extractor 一直在抽「定价」这一类，但之前没有对应渲染块，
@@ -1460,9 +1453,38 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
 </script>
 </body></html>"""
 
-def build_html(data):
+def build_html(data, standalone=False):
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    return HTML_TMPL.replace("__DATA__", payload)
+    html = HTML_TMPL.replace("__DATA__", payload)
+    return strip_push_nav(html) if standalone else html
+
+def strip_push_nav(html):
+    """去掉推送落地页的站内导航（global-nav + 板块 nav），内容与脚本不动。
+
+    navLinks 容器删掉后，原 `getElementById('navLinks').innerHTML=nav` 会拿到
+    null 使整段 render 抛错，所以一并改成守卫写法。
+    """
+    html = re.sub(r'<nav class="global-nav">.*?</nav>', '', html, flags=re.S)
+    html = re.sub(r'<nav class="nav">.*?</nav>', '', html, flags=re.S)
+    return html.replace(
+        "document.getElementById('navLinks').innerHTML=nav;",
+        "var _nl=document.getElementById('navLinks');if(_nl){_nl.innerHTML=nav;}")
+
+def derive_push_dashboard_url(dashboard_url):
+    """把 Pages 版仪表盘地址推导成推送专用无导航落地页地址。
+
+    空输入回空字符串，保持与现有 dashboard_url 配置兼容。
+    """
+    url = (dashboard_url or "").strip()
+    if not url:
+        return ""
+    for full, push in (("ai_daily_dashboard.html", "ai_push_standalone.html"),
+                       ("finance_dashboard.html", "finance_push_standalone.html")):
+        if url.endswith(full):
+            return url[: -len(full)] + push
+    if url.lower().endswith(".html"):
+        return url[:-len(".html")] + "_push_standalone.html"
+    return url
 
 def safe_md_url(url):
     """只放行 http/https，并转义会破坏 markdown 链接语法的字符，
@@ -1664,6 +1686,15 @@ def main():
         date_str = (datetime.now(timezone.utc) + CST_OFFSET).strftime("%Y-%m-%d")
 
     print(f"[1/4] 拉取日报 {date_str} ...")
+    try:
+        from llm_helpers import _llm_config as _ai_llm_config
+        _ak, _bu, _tm, _am = _ai_llm_config()
+        print(f"  [LLM配置] key={'已配置(长度%d)' % len(_ak) if _ak else '未配置'} "
+              f"base={_bu or '(空)'} translate={_tm or '(未配置)'} analysis={_am or '(未配置)'}")
+        if not _am:
+            print("  [WARN] 分析模型为空：指标抽取/趋势解读将跳过，不会发 LLM 请求。")
+    except Exception as _e:
+        print(f"  [WARN] LLM 配置读取失败：{_e!r}")
     raw, used_date, fell_back = fetch_daily(date_str)
     if fell_back:
         print(f"     当日未生成，已回退到最近一期：{used_date}")
@@ -1672,7 +1703,8 @@ def main():
 
     # 提取市场数据洞察
     market_insights = []
-    news_metrics = []  # 新增：新闻指标数据
+    news_metrics = {}  # 新闻指标数据（dict：分组指标；空 dict 表示本次未抽到，前端整块隐藏）
+    token_usage_payload = {}  # 直抓的周 token 用量（OpenRouter 网关口径，供页面Token/份额块渲染）
 
     if MARKET_DATA_AVAILABLE:
         try:
@@ -1684,6 +1716,14 @@ def main():
             print("     [DEBUG] 开始调用 MarketDataAggregator.aggregate() ...")
             aggregated = aggregator.aggregate(news_items=None)
             print(f"     [DEBUG] 聚合完成，返回数据: {len(aggregated) if aggregated else 0} 条")
+            # 直抓 Token 用量透传给页面（总量 + 份额 + 环比，不走新闻抽取）
+            mt = aggregated.get("market_trends", {}) if isinstance(aggregated, dict) else {}
+            token_usage_payload = {
+                "total_weekly_tokens": mt.get("total_weekly_tokens", 0),
+                "list": mt.get("token_usage", []),
+                "note": mt.get("token_usage_note", ""),
+                "history": mt.get("token_history", []),
+            }
 
             # 格式化为卡片
             print("     [DEBUG] 开始格式化为HTML卡片 ...")
@@ -1785,12 +1825,13 @@ def main():
 
     except Exception as e:
         print(f"     [WARN] 指标提取失败，跳过：{e}")
-        news_metrics = []
+        news_metrics = {}
 
     # 全文翻译会显著放大抓取和 LLM 延迟，默认且生产环境均关闭。
     print("[1.7/4] 已关闭新闻全文翻译；标题和摘要翻译保留")
 
-    data = shape(combined_report, market_insights=market_insights, news_metrics=news_metrics)
+    data = shape(combined_report, market_insights=market_insights, news_metrics=news_metrics,
+                token_usage=token_usage_payload)
     print(f"     成功：共 {data['meta']['total']} 条，版块 {[s['label'] for s in data['sections']]}")
 
     print("[2/4] 生成 HTML 仪表盘 ...")
@@ -1798,9 +1839,15 @@ def main():
     with open(out_html, "w", encoding="utf-8") as f:
         f.write(build_html(data))
     print(f"     已写入 {out_html}")
+    # 推送专用无导航落地页：Pages 版保留导航，企业微信卡片/正文链接用无导航版。
+    out_push_html = os.path.join(HERE, "ai_push_standalone.html")
+    with open(out_push_html, "w", encoding="utf-8") as f:
+        f.write(build_html(data, standalone=True))
+    print(f"     已写入 {out_push_html}")
+    push_url = derive_push_dashboard_url(dashboard_url) or dashboard_url
 
     print("[3/4] 渲染 Markdown 摘要 ...")
-    md = build_markdown(data, dashboard_url)
+    md = build_markdown(data, push_url)
     print(f"     长度 {len(md.encode('utf-8'))} 字节")
 
     if args.no_push:
@@ -1825,7 +1872,7 @@ def main():
         print("[4/4] 推送到企业微信群机器人（-> 个人微信）...")
         title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         try:
-            resp = push_wecom_webhook(webhook, md, dashboard_url, title_prefix=title)
+            resp = push_wecom_webhook(webhook, md, push_url, title_prefix=title)
             print("     企业微信返回：", resp)
             failed = [r for r in resp if not isinstance(r, dict) or r.get("errcode", 0) != 0]
             delivery_succeeded = bool(resp) and not failed
@@ -1840,7 +1887,7 @@ def main():
         print("[4/4] 推送到飞书群机器人（-> 飞书个人）...")
         title = f"AI 日报 · {fmt_cst(data['meta']['date'] + 'T00:00:00+08:00', '%m月%d日 {wd}')}"
         try:
-            resp = push_feishu(feishu_webhook, title, md, dashboard_url)
+            resp = push_feishu(feishu_webhook, title, md, push_url)
             print("     飞书返回：", resp)
             if isinstance(resp, dict) and resp.get("StatusCode") != 0:
                 print("     ⚠️ 推送失败：", resp.get("msg"), resp)
@@ -1917,7 +1964,7 @@ def main():
                     content=article_content,
                     author="AI Daily Push",
                     digest=article_digest,
-                    content_source_url=dashboard_url,
+                    content_source_url=push_url,
                     thumb_image_path=cover_path
                 )
 

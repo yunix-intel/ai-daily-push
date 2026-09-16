@@ -2131,89 +2131,85 @@ class TestScrapers(unittest.TestCase):
     def test_artificial_analysis_parser_paths(self):
         from scrapers.artificial_analysis_scraper import ArtificialAnalysisScraper
         scraper = ArtificialAnalysisScraper()
-        html = """<html><body>Highlights Claude 80 GPT 90
-            Model 200 tokens per second Model 0.5 per task
-            <script>{\"model\":\"Script\",\"score\":77}</script>
-            <table><tr><th>Model</th><th>Value</th></tr>
-            <tr><td>Fast</td><td>250</td></tr><tr><td>Cheap</td><td>0.4</td></tr>
-            <tr><td>Score</td><td>5</td></tr></table></body></html>"""
-        with patch("scrapers.artificial_analysis_scraper.urllib.request.urlopen", return_value=FakeResponse(html)), \
-             patch.object(scraper, "load_cache", return_value=None), \
-             patch.object(scraper, "save_cache"):
+        html = ("<html><body>Highlights Claude 80 GPT 90"
+                '<script type="application/ld+json">{"@type": "Dataset", "name": "Intelligence", "data": ['
+                '{"label": "Claude Fable 5.1 (max)", "artificialAnalysisIntelligenceIndex": 53.4},'
+                '{"label": "GPT-6 Astra (max)", "artificialAnalysisIntelligenceIndex": 52.8}]}</script>'
+                '<script type="application/ld+json">{"@type": "Dataset", "name": "Speed", "data": ['
+                '{"label": "Gemini 3.8 Flash (high)", "medianOutputSpeed": 335.5}]}</script>'
+                '<script type="application/ld+json">{"@type": "Dataset", "name": "Cost per Task", "data": ['
+                '{"label": "GPT-5.6 Luna (max)", "costPerIntelligenceIndexTask": 0.1783}]}</script>'
+                "</body></html>")
+        with (
+            patch("scrapers.artificial_analysis_scraper.urllib.request.urlopen", return_value=FakeResponse(html)),
+            patch.object(scraper, "load_cache", return_value=None),
+            patch.object(scraper, "save_cache"),
+        ):
             result = scraper.fetch_benchmarks()
-        self.assertTrue(result["highlights_found"])
-        self.assertTrue(result["intelligence"])
-        self.assertTrue(result["speed"])
-        self.assertTrue(result["cost"])
-        result = {"intelligence": [], "speed": [], "cost": []}
-        soup = __import__("bs4").BeautifulSoup('<script>{"model":"X","score":3}</script>', "html.parser")
-        self.assertTrue(scraper._parse_from_scripts(soup, result)["intelligence"])
-        result = {"intelligence": [], "speed": [], "cost": []}
-        soup = __import__("bs4").BeautifulSoup('<table><tr><th>x</th><th>y</th></tr><tr><td>A</td><td>bad</td></tr></table>', "html.parser")
-        self.assertEqual(scraper._parse_tables(soup, result)["intelligence"], [])
-        with patch.object(scraper, "load_cache", return_value=None), \
-             patch("scrapers.artificial_analysis_scraper.urllib.request.urlopen", side_effect=RuntimeError("offline")), \
-             patch.object(scraper, "_load_fallback_cache", return_value={"is_fallback": True}):
+        self.assertTrue(result["parsed"])
+        self.assertEqual(result["datasets_found"], ["Intelligence", "Speed", "Cost per Task"])
+        self.assertEqual(result["intelligence"][0]["score"], 53.4)
+        self.assertEqual(result["speed"][0]["tokens_per_sec"], 335.5)
+        self.assertEqual(result["cost"][0]["cost_per_task"], 0.1783)
+        models = " ".join(r["model"] for r in result["intelligence"])
+        self.assertNotIn("80", models)
+        with (
+            patch.object(scraper, "load_cache", return_value=None),
+            patch("scrapers.artificial_analysis_scraper.urllib.request.urlopen",
+                  return_value=FakeResponse("<html><body>全新改版</body></html>")),
+            patch.object(scraper, "_load_fallback_cache", return_value={"is_fallback": True}),
+        ):
             self.assertTrue(scraper.fetch_benchmarks()["is_fallback"])
-
+        with (
+            patch.object(scraper, "load_cache", return_value=None),
+            patch("scrapers.artificial_analysis_scraper.urllib.request.urlopen", side_effect=RuntimeError("offline")),
+            patch.object(scraper, "_load_fallback_cache", return_value={"is_fallback": True}),
+        ):
+            self.assertTrue(scraper.fetch_benchmarks()["is_fallback"])
     def test_artificial_analysis_cache_and_parser_exception_paths(self):
         from scrapers.artificial_analysis_scraper import ArtificialAnalysisScraper
-        from bs4 import BeautifulSoup
         scraper = ArtificialAnalysisScraper()
-        cached = {"source": "cache", "intelligence": []}
-        with patch.object(scraper, "load_cache", return_value=cached):
-            self.assertIs(scraper.fetch_benchmarks(), cached)
-        result = {"intelligence": [], "speed": [], "cost": []}
-        broken_soup = MagicMock()
-        broken_soup.get_text.side_effect = RuntimeError("bad soup")
-        self.assertEqual(scraper._parse_highlights(broken_soup, result), result)
-        broken_scripts = MagicMock()
-        broken_scripts.find_all.side_effect = RuntimeError("bad scripts")
-        self.assertEqual(scraper._parse_from_scripts(broken_scripts, result), result)
-        broken_tables = MagicMock()
-        broken_tables.find_all.side_effect = RuntimeError("bad tables")
-        self.assertEqual(scraper._parse_tables(broken_tables, result), result)
-        result = {"intelligence": [], "speed": [], "cost": []}
-        soup = BeautifulSoup("<script>not-json</script>", "html.parser")
-        self.assertEqual(scraper._parse_from_scripts(soup, result), result)
+        good = {"source": "cache", "parsed": True, "intelligence": [],
+                "speed": [], "cost": [{"model": "M", "cost_per_task": 0.5}]}
+        with patch.object(scraper, "load_cache", return_value=good):
+            self.assertIs(scraper.fetch_benchmarks(), good)
+        junk = {"source": "cache",
+                "intelligence": [{"model": "Qwen", "score": 3}],
+                "speed": [], "cost": []}
+        with (
+            patch.object(scraper, "load_cache", return_value=junk),
+            patch("scrapers.artificial_analysis_scraper.urllib.request.urlopen", side_effect=RuntimeError("offline")),
+            patch.object(scraper, "_load_fallback_cache", return_value={"is_fallback": True}),
+        ):
+            self.assertTrue(scraper.fetch_benchmarks()["is_fallback"])
+        self.assertEqual(scraper._extract_datasets("<html>no scripts</html>"), {})
+        self.assertEqual(scraper._clean_rows(
+            [None, {"label": "", "x": 1}], ("artificialAnalysisIntelligenceIndex",), "intelligence"), [])
         fallback = scraper._load_fallback_cache()
         self.assertEqual(fallback["source"], "artificial_analysis")
-
     def test_artificial_analysis_scripts_tables_and_fallback_edges(self):
         from scrapers.artificial_analysis_scraper import ArtificialAnalysisScraper
-        from bs4 import BeautifulSoup
         scraper = ArtificialAnalysisScraper()
-        soup = BeautifulSoup(
-            '<script>{"model":"Speed","speed":120}</script>'
-            '<script>{"model":"Cost","cost":0.2}</script>'
-            '<script>{"model":"Bad","score":3}{bad-json}</script>',
-            "html.parser"
-        )
-        result = scraper._parse_from_scripts({"find_all": lambda: []},
-                                             {"intelligence": [], "speed": [], "cost": []})
-        self.assertEqual(result["intelligence"], [])
-        result = {"intelligence": [], "speed": [], "cost": []}
-        result = scraper._parse_from_scripts(soup, result)
-        self.assertEqual(result["speed"][0]["model"], "Speed")
-        self.assertEqual(result["cost"][0]["model"], "Cost")
-        result = {"intelligence": [], "speed": [], "cost": []}
-        table = BeautifulSoup(
-            "<table><tr><th>m</th><th>v</th></tr>"
-            "<tr><td>Speed</td><td>100.5</td></tr>"
-            "<tr><td>Score</td><td>1</td></tr>"
-            "<tr><td>Cost</td><td>0.9</td></tr>"
-            "</table>", "html.parser"
-        )
-        parsed = scraper._parse_tables(table, result)
-        self.assertEqual(parsed["speed"][0]["model"], "Speed")
-        self.assertEqual(parsed["intelligence"][0]["model"], "Score")
-        self.assertEqual(parsed["cost"][0]["cost_per_task"], 0.9)
+        html = ("<html><head>"
+                '<script type="application/ld+json">not json</script>'
+                '<script type="application/ld+json">{"@type": "Other", "name": "X"}</script>'
+                '<script type="application/ld+json">{"@type": "Dataset", "name": "Speed", "data": ['
+                '{"label": "Gemini 3.8 Flash (high)", "medianOutputSpeed": 335.5},'
+                '{"label": "Gemini 3.8 Flash (high)", "medianOutputSpeed": 335.5},'
+                '{"label": "Stalled", "medianOutputSpeed": 0},'
+                '{"label": "", "medianOutputSpeed": 400}]}</script>'
+                "</head></html>")
+        datasets = scraper._extract_datasets(html)
+        self.assertEqual(list(datasets), ["Speed"])
+        rows = scraper._clean_rows(datasets["Speed"], ("medianOutputSpeed",), "speed")
+        self.assertEqual([r["model"] for r in rows], ["Gemini 3.8 Flash (high)"])
         with tempfile.TemporaryDirectory() as directory:
             scraper.cache_dir = __import__("pathlib").Path(directory)
             (scraper.cache_dir / "artificial_analysis_3.json").write_text("{", encoding="utf-8")
             (scraper.cache_dir / "artificial_analysis_2.json").write_text("[]", encoding="utf-8")
-            self.assertEqual(scraper._load_fallback_cache()["intelligence"], [])
-
+            empty = scraper._load_fallback_cache()
+            self.assertEqual(empty["intelligence"], [])
+            self.assertFalse(empty.get("parsed", False))
     def test_trend_analyzer_cache_loading_and_price_edges(self):
         from analyzers.trend_analyzer import TrendAnalyzer
         with tempfile.TemporaryDirectory() as directory:
@@ -2238,20 +2234,16 @@ class TestScrapers(unittest.TestCase):
         from scrapers.artificial_analysis_scraper import ArtificialAnalysisScraper
         from bs4 import BeautifulSoup
         scraper = ArtificialAnalysisScraper()
-        soup = MagicMock()
-        soup.get_text.return_value = "Claude 0 GPT 100 Qwen 99 Speed 1000 tokens per second Cost 9.1 per task"
-        result = {"intelligence": [], "speed": [], "cost": []}
-        parsed = scraper._parse_highlights(soup, result)
-        self.assertEqual([item["score"] for item in parsed["intelligence"]], [99])
-        self.assertEqual([item["tokens_per_sec"] for item in parsed["speed"]], [1000])
-        self.assertEqual([item["cost_per_task"] for item in parsed["cost"]], [9.1])
+        parsed_empty = scraper.parse_homepage("<html><body>Claude 0 GPT 100 Qwen 99</body></html>")
+        self.assertFalse(parsed_empty["parsed"])
         with tempfile.TemporaryDirectory() as directory:
             scraper.cache_dir = __import__("pathlib").Path(directory)
             (scraper.cache_dir / "artificial_analysis_bad.json").write_text("{", encoding="utf-8")
             good = scraper.cache_dir / "artificial_analysis_good.json"
-            good.write_text(json.dumps({"source": "history"}), encoding="utf-8")
-            self.assertEqual(scraper._load_fallback_cache()["source"], "history")
-
+            good.write_text('{"source": "artificial_analysis", "intelligence": [{"model": "Claude Fable 5.1 (max)", "score": 53.4}], "speed": [], "cost": []}', encoding="utf-8")
+            cached = scraper._load_fallback_cache()
+            self.assertTrue(cached["is_fallback"])
+            self.assertEqual(cached["intelligence"][0]["score"], 53.4)
     def test_money_flow_post_close_and_fallback_shapes(self):
         from scrapers.money_flow_scraper import MoneyFlowScraper
         scraper = MoneyFlowScraper()

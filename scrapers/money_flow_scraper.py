@@ -131,7 +131,11 @@ class MoneyFlowScraper:
         return data['data']['diff']
 
     def fetch_north_flow(self, target_date=None):
-        """获取最近已收盘交易日的北向资金日数据。"""
+        """【已废弃】北向资金整块已砍：交易所停止披露后只剩占位零值。
+
+        方法保留仅供旧单测回归，生产流程（finance_daily_push）不再调用，
+        新代码不得使用。如需恢复，先解决数据源问题再删此标记。
+        """
         target = self._resolve_target_date(target_date)
         errors = []
         for source, fetcher in (("eastmoney", self._fetch_eastmoney_post_close),

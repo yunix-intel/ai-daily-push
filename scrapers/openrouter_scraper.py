@@ -107,14 +107,17 @@ class OpenRouterScraper(BaseScraper):
 
             return {
                 "description": description,
-                "detected_models": self._extract_model_names(soup)
+                "detected_models": self._extract_model_names(soup),
+                # 直抓：近一周各模型 token 数 + 环比（网关口径，不依赖新闻 LLM 抽取）
+                "token_usage": self._parse_token_usage(html)
             }
 
         except Exception as e:
             print(f"     [WARN] Rankings 页面抓取失败：{e}")
             return {
                 "description": "Live LLM rankings by real-world usage",
-                "detected_models": []
+                "detected_models": [],
+                "token_usage": []
             }
 
     def _extract_model_names(self, soup):
@@ -134,8 +137,51 @@ class OpenRouterScraper(BaseScraper):
 
         return detected[:10]  # 最多10个
 
+    @staticmethod
+    def _tokens_to_number(value, unit):
+        """17.4T / 800M / 12K -> 绝对 token 数，用于加总和份额计算。"""
+        try:
+            return float(value) * {"T": 1e12, "B": 1e9, "M": 1e6, "K": 1e3}.get(unit, 1)
+        except (TypeError, ValueError):
+            return 0
+
+    def _parse_token_usage(self, html):
+        """解析 Rankings 表格：模型名 + 近一周 token 数 + 环比变化。
+
+        口径：流经 OpenRouter 网关的调用量，非全网真实总量。
+        页面是服务端直出的 <table>（无 __NEXT_DATA__），按 <tr> 切分提取。
+        """
+        usage = []
+        try:
+            for chunk in html.split("<tr")[1:]:
+                seg = chunk[:6000]
+                m = re.search(
+                    r'href="/[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_.\-]+"[^>]*>([^<]{2,60})</a>',
+                    seg)
+                t = re.search(r"<div>([\d.]+)([TBMK]) tokens</div>", seg)
+                if not (m and t):
+                    continue
+                d = re.search(r"text-(positive|negative)-text", seg)
+                p = re.search(r"([+-]?[\d.]+%)", seg)
+                usage.append({
+                    "model": m.group(1).strip(),
+                    "weekly_tokens_display": t.group(1) + t.group(2),
+                    "weekly_tokens": self._tokens_to_number(t.group(1), t.group(2)),
+                    "wow_direction": (d.group(1) if d else "flat"),
+                    "wow_change": (p.group(1) if p else "N/A"),
+                })
+        except Exception as e:
+            print(f"     [WARN] Token 用量解析失败：{e}")
+        return usage
+
     def _merge_data(self, models_data, rankings_data):
         """整合 API 数据和页面数据"""
+        # 直抓的周 token 用量：加总 + Top-N 内份额（网关口径，非全网总量）
+        token_usage = rankings_data.get("token_usage", []) or []
+        total_weekly = sum(u.get("weekly_tokens", 0) for u in token_usage)
+        for u in token_usage:
+            u["market_share"] = round(u["weekly_tokens"] / total_weekly * 100, 1) if total_weekly else 0
+
         result = {
             "source": "openrouter",
             "date": datetime.now().strftime("%Y-%m-%d"),
@@ -143,6 +189,9 @@ class OpenRouterScraper(BaseScraper):
             "description": rankings_data.get("description", ""),
             "detected_models": rankings_data.get("detected_models", []),
             "pricing": models_data.get("pricing", []),
+            "token_usage": token_usage,
+            "total_weekly_tokens": total_weekly,
+            "token_usage_note": "OpenRouter 网关口径：流经该网关的近一周 token 加总，非全网真实总量",
 
             # 保留向后兼容字段
             "top_models": rankings_data.get("detected_models", [])[:10],

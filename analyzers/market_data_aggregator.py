@@ -5,8 +5,46 @@
 """
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import glob
+import json
 from scrapers import fetch_openrouter_data, fetch_aa_data
 from .news_metrics_extractor import NewsMetricsExtractor
+
+SNAPSHOT_DIR = Path(__file__).resolve().parent.parent / "data" / "market_data"
+
+
+def build_token_history(data_dir=None, days=7):
+    """从逐日快照拼 Token 总量/份额序列，供趋势呈现。
+
+    只有 total_weekly_tokens > 0 的快照才算有效点（旧快照解析器是死的，
+    全是空总量，混进去会把曲线拉成断崖）。文件损坏一律跳过，不抛异常。
+    """
+    data_dir = Path(data_dir) if data_dir else SNAPSHOT_DIR
+    points = []
+    try:
+        files = sorted(glob.glob(str(data_dir / "openrouter_*.json")))[-days:]
+    except OSError:
+        return []
+    for path in files:
+        try:
+            with open(path, encoding="utf-8") as f:
+                snap = json.load(f)
+        except (OSError, ValueError):
+            continue
+        total = snap.get("total_weekly_tokens") or 0
+        if not isinstance(total, (int, float)) or total <= 0:
+            continue
+        rows = snap.get("token_usage") or []
+        points.append({
+            "date": snap.get("date") or Path(path).stem.rsplit("_", 1)[-1],
+            "total_weekly_tokens": total,
+            "top": [{"model": r.get("model", ""),
+                     "market_share": r.get("market_share", 0)}
+                    for r in rows[:3]
+                    if isinstance(r, dict) and r.get("model")],
+        })
+    return points
 
 
 class MarketDataAggregator:
@@ -117,7 +155,13 @@ class MarketDataAggregator:
             "market_trends": {
                 "total_models": openrouter.get("total_models", 0),
                 "top_models_by_price": self._extract_top_models(openrouter),
-                "pricing_summary": self._summarize_pricing(openrouter)
+                "pricing_summary": self._summarize_pricing(openrouter),
+                # 直抓的周 token 用量（网关口径）：总量 + 各模型份额 + 环比，不走新闻抽取
+                "token_usage": openrouter.get("token_usage", []),
+                "total_weekly_tokens": openrouter.get("total_weekly_tokens", 0),
+                "token_usage_note": openrouter.get("token_usage_note", ""),
+                # 多日序列：逐日快照累积的曲线，空快照已在 builder 里滤掉
+                "token_history": build_token_history(),
             },
 
             # Artificial Analysis 数据（去重）
