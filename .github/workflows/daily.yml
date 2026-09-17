@@ -116,8 +116,10 @@ jobs:
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE }}
-          OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS }}
+          # 财经独占模型（与 AI 日报隔离，避免并发争抢同一模型触发网关熔断）：
+          # 分析 deepseek-v4.1-flash / 翻译 qwen3.8-27b。Secret 未建时回退到共用模型。
+          OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE_FINANCE || secrets.OPENAI_MODEL_TRANSLATE }}
+          OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS_FINANCE || secrets.OPENAI_MODEL_ANALYSIS }}
           DELIVERY_STATUS_FILE: finance_delivery_status.json
         run: python -u finance_daily_push.py
       - name: 上传财经页面和状态
