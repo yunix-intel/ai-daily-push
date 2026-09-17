@@ -73,6 +73,36 @@ def _semaphore_for_model(model, translate_model, analysis_model):
     return _DEEPSEEK_SEMAPHORE
 
 
+def _read_with_deadline(response, timeout):
+    """限时读完响应体。
+
+    urllib 的 timeout 只是 socket 空闲超时：网关以 1 token/s 慢滴灌时，
+    每次 read 都能按时返回数据，总耗时 30 分钟也触发不了（线上实测）。
+    这里另起线程读，主线程按 timeout join，超时就关连接抛 TimeoutError，
+    上层走已有 fallback（翻译保留原文 / 分析记未生成），不再无限等。
+    """
+    out, err = [], []
+
+    def _read():
+        try:
+            out.append(response.read())
+        except Exception as e:  # noqa: BLE001 - 透传给主线程
+            err.append(e)
+
+    t = threading.Thread(target=_read, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        try:
+            response.close()
+        except Exception:  # noqa: BLE001 - 关闭尽力而为
+            pass
+        raise TimeoutError(f"LLM 响应读取超过总限时 {timeout}s（疑似慢滴灌）")
+    if err:
+        raise err[0]
+    return out[0] if out else b""
+
+
 def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=None):
     """
     调用 OpenAI 兼容接口并解析 JSON 对象
@@ -129,7 +159,7 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
 
             with _semaphore_for_model(resolved_model, translate_model, analysis_model):
                 with urllib.request.urlopen(req, timeout=timeout) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                    body = json.loads(_read_with_deadline(response, timeout).decode("utf-8"))
 
             content = body["choices"][0]["message"]["content"]
 
@@ -206,7 +236,7 @@ def call_llm(system_prompt, user_prompt, retries=None, model=None, timeout=None)
 
             with _semaphore_for_model(resolved_model, translate_model, analysis_model):
                 with urllib.request.urlopen(req, timeout=timeout) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                    body = json.loads(_read_with_deadline(response, timeout).decode("utf-8"))
 
             content = body["choices"][0]["message"]["content"]
             return content.strip()

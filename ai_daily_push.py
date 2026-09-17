@@ -29,6 +29,36 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 import json, sys, os, re, html, time, threading, urllib.parse, urllib.request, urllib.error
 
 
+def _read_with_deadline(response, timeout):
+    """限时读完响应体（总耗时上限）。
+
+    urllib 的 timeout 只是 socket 空闲超时：网关排队/慢滴灌时每次 read
+    都有数据，总耗时 30 分钟也触发不了（qwen3.8-flash 线上实测 30m27s）。
+    另起线程读，主线程按 timeout join，超时关连接抛 TimeoutError，
+    上层走已有 fallback（翻译保留原文/分析记未生成），不再无限等。
+    """
+    out, err = [], []
+
+    def _read():
+        try:
+            out.append(response.read())
+        except Exception as e:  # noqa: BLE001 - 透传给主线程
+            err.append(e)
+
+    t = threading.Thread(target=_read, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        try:
+            response.close()
+        except Exception:  # noqa: BLE001 - 关闭尽力而为
+            pass
+        raise TimeoutError(f"LLM 响应读取超过总限时 {timeout}s（疑似网关排队/慢滴灌）")
+    if err:
+        raise err[0]
+    return out[0] if out else b""
+
+
 _DEEPSEEK_MAX_CONCURRENCY = max(1, int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "2")))
 _DEEPSEEK_SEMAPHORE = threading.BoundedSemaphore(_DEEPSEEK_MAX_CONCURRENCY)
 # Keep the default job budget bounded: callers can opt into slower retries via env.
@@ -475,8 +505,9 @@ def _ai_llm_config():
 def call_ai_llm_json(system_prompt, user_prompt, retries=None, timeout=None):
     """调用 OpenAI 兼容接口并解析 JSON 对象。失败抛异常，由调用方降级。
 
-    timeout 给到 240s：实测网关翻一批 10 条要 80~160s，波动很大，
-    卡 120s 会把本来能成功的批次判成超时。
+    timeout 默认取 LLM_TIMEOUT（线上 90s）：socket 空闲超时 + 下方
+    _read_with_deadline 总限时双保险，网关排队/慢滴灌最多等 90s，
+    超时批次走逐条回退，不再无限拖住整个 job。
     """
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
@@ -510,7 +541,7 @@ def call_ai_llm_json(system_prompt, user_prompt, retries=None, timeout=None):
             )
             with _DEEPSEEK_SEMAPHORE:
                 with urllib.request.urlopen(req, timeout=timeout) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                    body = json.loads(_read_with_deadline(response, timeout).decode("utf-8"))
             content = body["choices"][0]["message"]["content"]
             # 有些网关会把 JSON 包在 ```json fence 里，剥掉再解析。
             content = re.sub(r"^\s*```(?:json)?|```\s*$", "", content.strip())

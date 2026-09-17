@@ -28,6 +28,36 @@ import json, os, re, sys, time, threading, urllib.parse, urllib.request, urllib.
 from concurrent.futures import ThreadPoolExecutor
 
 
+def _read_with_deadline(response, timeout):
+    """限时读完响应体（总耗时上限）。
+
+    urllib 的 timeout 只是 socket 空闲超时：网关排队/慢滴灌时每次 read
+    都有数据，总耗时 30 分钟也触发不了（qwen3.8-flash 线上实测 30m27s）。
+    另起线程读，主线程按 timeout join，超时关连接抛 TimeoutError，
+    上层走已有 fallback（翻译保留原文/分析记未生成），不再无限等。
+    """
+    out, err = [], []
+
+    def _read():
+        try:
+            out.append(response.read())
+        except Exception as e:  # noqa: BLE001 - 透传给主线程
+            err.append(e)
+
+    t = threading.Thread(target=_read, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        try:
+            response.close()
+        except Exception:  # noqa: BLE001 - 关闭尽力而为
+            pass
+        raise TimeoutError(f"LLM 响应读取超过总限时 {timeout}s（疑似网关排队/慢滴灌）")
+    if err:
+        raise err[0]
+    return out[0] if out else b""
+
+
 _DEEPSEEK_MAX_CONCURRENCY = max(1, int(os.getenv("DEEPSEEK_MAX_CONCURRENCY", "2")))
 _ANALYSIS_MAX_CONCURRENCY = max(1, int(os.getenv("ANALYSIS_MAX_CONCURRENCY", "8")))
 _DEEPSEEK_SEMAPHORE = threading.BoundedSemaphore(_DEEPSEEK_MAX_CONCURRENCY)
@@ -876,7 +906,7 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
             )
             with semaphore:
                 with urllib.request.urlopen(req, timeout=timeout) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                    body = json.loads(_read_with_deadline(response, timeout).decode("utf-8"))
             content = body["choices"][0]["message"]["content"]
             # 有些网关会把 JSON 包在 ```json fence 里，剥掉再解析。
             content = re.sub(r"^\s*```(?:json)?|```\s*$", "", content.strip())
@@ -931,7 +961,7 @@ def call_llm_text(system_prompt, user_prompt, retries=None, model=None, timeout=
             )
             with semaphore:
                 with urllib.request.urlopen(req, timeout=timeout) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                    body = json.loads(_read_with_deadline(response, timeout).decode("utf-8"))
             return body["choices"][0]["message"]["content"].strip()
         except Exception as exc:
             last_exc = exc
