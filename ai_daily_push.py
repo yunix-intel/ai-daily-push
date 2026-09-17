@@ -27,6 +27,7 @@ AI 日报 -> pushplus(个人微信) 每日推送管线（单文件，可独立�
 注意：网络请求在受限环境下需放行外网（本机直跑即可）。
 """
 import json, sys, os, re, html, time, threading, urllib.parse, urllib.request, urllib.error
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def _read_with_deadline(response, timeout):
@@ -555,16 +556,107 @@ def call_ai_llm_json(system_prompt, user_prompt, retries=None, timeout=None):
     raise last_exc
 
 
-def translate_batch_llm_ai(pairs, batch_size=10):
+def call_ai_llm_json_stream(system_prompt, user_prompt, retries=None, timeout=None,
+                           max_tokens=1500):
+    """流式版 JSON 调用（翻译专用）。
+
+    非流式要等网关整段生成完才回包：排队 30 分钟，请求就干等 30 分钟；
+    且 urllib 的 socket 超时在慢滴灌下永远触发不了（_read_with_deadline 是兜底）。
+    流式把等待切成两段，各管一段：
+    - urlopen 的 timeout = 首字节预算（建连 + 排队；网关出队开始生成即回响应头，
+      本地实测拥堵 transient，平时首字节约 4s，预算给 45s）；
+    - 循环内墙钟检查 = 总预算 timeout，超了立刻放弃。
+    某段超限立刻抛错，由调用方重试一次（重排队是 lottery，transient 拥堵常能秒过），
+    再失败该批保留英文，不拖住其他批次。网关若回非 SSE 整包则按普通 JSON 解析。
+    """
+    retries = _LLM_MAX_RETRIES if retries is None else retries
+    timeout = _LLM_TIMEOUT if timeout is None else timeout
+    first_byte_budget = min(45, timeout)
+    api_key, base_url, model = _ai_llm_config()
+    if not api_key:
+        raise RuntimeError("未配置 OPENAI_API_KEY")
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.3,
+        "response_format": {"type": "json_object"},
+        "stream": True,
+        "max_tokens": max_tokens,
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/chat/completions",
+                data=data,
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Authorization": f"Bearer {api_key}",
+                    # 部分网关模型（如 muse-spark）缺该头会被路由层 400 拒掉
+                    #（MissingSessionID）。值从 X_OPENCODE_SESSION 取，未配置则不带。
+                    **({"x-opencode-session": os.environ["X_OPENCODE_SESSION"]}
+                       if os.environ.get("X_OPENCODE_SESSION") else {}),
+                },
+            )
+            start = time.monotonic()
+            with _DEEPSEEK_SEMAPHORE:
+                # 出队即回头：这个 timeout 只盖建连 + 排队，不盖生成。
+                with urllib.request.urlopen(req, timeout=first_byte_budget) as response:
+                    ctype = response.headers.get("Content-Type", "")
+                    if "text/event-stream" not in ctype:
+                        # 网关没按流式回：按普通整包解析（总限时仍由外层调用方保障）。
+                        body = json.loads(response.read().decode("utf-8"))
+                        content = body["choices"][0]["message"]["content"]
+                    else:
+                        parts = []
+                        for line in response:
+                            if time.monotonic() - start >= timeout:
+                                raise TimeoutError(
+                                    f"流式生成超过总限时 {timeout}s，放弃")
+                            s = line.decode("utf-8", errors="replace").strip()
+                            if not s.startswith("data:"):
+                                continue
+                            d = s[5:].strip()
+                            if d == "[DONE]":
+                                break
+                            try:
+                                choices = json.loads(d).get("choices") or []
+                            except Exception:  # noqa: BLE001 - 心跳/注释行直接跳过
+                                continue
+                            if not choices:
+                                continue  # new-api 发的空 choices 占位 chunk
+                            delta = (choices[0].get("delta") or {}).get("content") or ""
+                            parts.append(delta)
+                        content = "".join(parts)
+            content = re.sub(r"^\s*```(?:json)?|```\s*$", "", content.strip())
+            return json.loads(content)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries:
+                print(f"     流式翻译失败（{exc!r}），重试 {attempt + 1}/{retries}...")
+                time.sleep(3 * (attempt + 1))
+                continue
+    raise last_exc
+
+
+def translate_batch_llm_ai(pairs, batch_size=5):
     """批量翻译：pairs 为 [(key, title, summary)]，返回 {key: (title_zh, summary_zh)}。
 
-    单批失败只影响该批，其余批次照常；调用方对漏掉的条目再走逐条回退。
+    策略（qwen 通道排队波动大：串行 10 条一批会被单个慢请求拖死）：
+    - 小批量（默认 5 条）：单请求 completion 减半，出队 + 生成更快；
+    - 批次并行（4 worker，受 _DEEPSEEK_SEMAPHORE 限流）：一批卡住不挡其他批；
+    - 流式 + 每批重试 1 次：排队多为 transient，重排常能秒过；
+    单批失败只影响该批（保留英文），其余批次照常；调用方对漏项再逐条回退。
     """
+    batches = [pairs[i:i + batch_size] for i in range(0, len(pairs), batch_size)]
+    total_batches = len(batches)
     result = {}
-    total_batches = (len(pairs) + batch_size - 1) // batch_size
-    for start in range(0, len(pairs), batch_size):
-        batch = pairs[start:start + batch_size]
-        batch_num = start // batch_size + 1
+
+    def _translate_one(batch_num, batch):
         listing = [
             json.dumps({"id": key, "title": title, "summary": (summary or "")[:300]},
                        ensure_ascii=False)
@@ -576,20 +668,29 @@ def translate_batch_llm_ai(pairs, batch_size=10):
             '输出 JSON：{"items":[{"id":原样返回的id,"title":"中文标题","summary":"中文摘要"}]}\n'
             "summary 为空则中文 summary 也返回空字符串。必须覆盖全部输入条目。"
         )
-        try:
-            data = call_ai_llm_json(AI_TRANSLATE_SYSTEM, user_prompt)
-            rows = data.get("items") or []
-            for row in rows:
-                rid = row.get("id")
-                if isinstance(rid, str) and rid.isdigit():
-                    rid = int(rid)
-                if rid is None:
-                    continue
-                result[rid] = ((row.get("title") or "").strip(),
-                               (row.get("summary") or "").strip())
-            print(f"     批次 {batch_num}/{total_batches}：{len(rows)}/{len(batch)} 条翻译成功")
-        except Exception as exc:
-            print(f"     批次 {batch_num}/{total_batches} 失败（该批保留英文）：{exc!r}")
+        data = call_ai_llm_json_stream(AI_TRANSLATE_SYSTEM, user_prompt, retries=1)
+        mapping = {}
+        for row in data.get("items") or []:
+            rid = row.get("id")
+            if isinstance(rid, str) and rid.isdigit():
+                rid = int(rid)
+            if rid is None:
+                continue
+            mapping[rid] = ((row.get("title") or "").strip(),
+                            (row.get("summary") or "").strip())
+        return mapping, len(batch)
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {ex.submit(_translate_one, i + 1, b): i + 1
+                for i, b in enumerate(batches)}
+        for fut in as_completed(futs):
+            batch_num = futs[fut]
+            try:
+                mapping, n = fut.result()
+                result.update(mapping)
+                print(f"     批次 {batch_num}/{total_batches}：{len(mapping)}/{n} 条翻译成功")
+            except Exception as exc:
+                print(f"     批次 {batch_num}/{total_batches} 失败（该批保留英文）：{exc!r}")
     return result
 
 
@@ -604,7 +705,7 @@ def _needs_translation(text):
 def translate_items(report, give_up_after=6):
     """英文条目译中文并保留原文；失败回退原文，不中断整体流程。
 
-    优先走自建网关批量翻译（一次 10 条），配置缺失或整体失败时才逐条走 MyMemory。
+    优先走自建网关批量翻译（5 条一批、4 路并行、流式），配置缺失或整体失败时才逐条走 MyMemory。
     MyMemory 是免费接口、按 IP 限流：逐条翻 36 条要发 72 次请求，实测必被 429，
     且被限流后每条都要重试到超时（约 17s），几十条能拖十几分钟。
     """
