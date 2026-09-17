@@ -1,0 +1,60 @@
+name: 模型探针（临时，用后即删）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 无头 chat 协议探测
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+        run: |
+          python -u - <<'EOF'
+          import json, os, urllib.request
+
+          BASE = os.environ["OPENAI_BASE_URL"].rstrip("/")
+          KEY = os.environ["OPENAI_API_KEY"]
+          # 故意不带 x-opencode-session 头：验证 chat 协议是否需要它
+          HEADERS = {"Content-Type": "application/json",
+                     "Authorization": f"Bearer {KEY}"}
+
+          def call(model, messages, max_tokens, mode="text"):
+              body = {"model": model, "messages": messages,
+                      "max_tokens": max_tokens, "temperature": 0}
+              if mode == "json":
+                  body["response_format"] = {"type": "json_object"}
+              req = urllib.request.Request(
+                  BASE + "/chat/completions",
+                  data=json.dumps(body).encode(), headers=HEADERS)
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      raw = r.read().decode()
+              except Exception as e:
+                  print(f"[{model}/{mode}] HTTP异常: {e}")
+                  return
+              print(f"[{model}/{mode}] 原始返回(截断500): {raw[:500]}")
+              try:
+                  data = json.loads(raw)
+                  msg = data["choices"][0]["message"]
+                  fr = data["choices"][0].get("finish_reason")
+                  content = msg.get("content") or ""
+                  print(f"[{model}/{mode}] finish={fr} content长度={len(content)} "
+                        f"content预览={content[:120]!r}")
+                  if mode == "json":
+                      try:
+                          json.loads(content)
+                          print(f"[{model}/{mode}] JSON解析: OK")
+                      except Exception as e:
+                          print(f"[{model}/{mode}] JSON解析: FAIL {e}")
+              except Exception as e:
+                  print(f"[{model}/{mode}] 结构解析异常: {e}")
+
+          for m in ["deepseek-v4.1-flash", "glm-5.3-flash"]:
+              call(m, [{"role": "user", "content": "用中文回答:1+1等于几?"}], 60)
+              call(m, [{"role": "user",
+                        "content": '只输出JSON:{"a":1,"b":"x"}'}], 100, "json")
+          EOF
