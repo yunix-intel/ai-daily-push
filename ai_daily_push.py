@@ -508,7 +508,7 @@ def call_ai_llm_json(system_prompt, user_prompt, retries=None, timeout=None):
 
     timeout 默认取 LLM_TIMEOUT（线上 300s）：socket 空闲超时 + 下方
     _read_with_deadline 总限时双保险，网关排队/慢滴灌到点即放弃，
-    超时批次走逐条回退，不再无限拖住整个 job（job 上限 30 分钟对冲）。
+    超时批次走逐条回退，不再无限拖住整个 job（首字节另有 60s 上限，job 20 分钟守得住）。
     """
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
@@ -564,15 +564,15 @@ def call_ai_llm_json_stream(system_prompt, user_prompt, retries=None, timeout=No
     且 urllib 的 socket 超时在慢滴灌下永远触发不了（_read_with_deadline 是兜底）。
     流式把等待切成两段，各管一段：
     - urlopen 的 timeout = 首字节预算（建连 + 排队；网关出队开始生成即回响应头，
-      总预算 300s 时首字节给 120s：transient 拥堵下多等一会儿常能直接出队，
-      真死透也不过 120s 就放弃重试）；
+      只给 60s：排队超限立刻放弃重试，通道死透时单批最多烧 60+3+60≈123s，
+      翻译段最坏约 5 分钟，job 20 分钟上限守得住）；
     - 循环内墙钟检查 = 总预算 timeout，超了立刻放弃。
     某段超限立刻抛错，由调用方重试一次（重排队是 lottery，transient 拥堵常能秒过），
     再失败该批保留英文，不拖住其他批次。网关若回非 SSE 整包则按普通 JSON 解析。
     """
     retries = _LLM_MAX_RETRIES if retries is None else retries
     timeout = _LLM_TIMEOUT if timeout is None else timeout
-    first_byte_budget = min(120, timeout)
+    first_byte_budget = min(60, timeout)
     api_key, base_url, model = _ai_llm_config()
     if not api_key:
         raise RuntimeError("未配置 OPENAI_API_KEY")
