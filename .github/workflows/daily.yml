@@ -21,7 +21,7 @@ env:
   DEEPSEEK_MAX_CONCURRENCY: "4"
   ANALYSIS_MAX_CONCURRENCY: "8"
   LLM_MAX_RETRIES: "0"
-  LLM_TIMEOUT: "90"
+  LLM_TIMEOUT: "300"
   RSSHUB_TIMEOUT: "5"
   RSSHUB_MAX_MIRRORS: "2"
   PYTHONUNBUFFERED: "1"
@@ -31,7 +31,7 @@ env:
 jobs:
   ai-daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: 检出代码
         uses: actions/checkout@v7
