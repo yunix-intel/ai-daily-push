@@ -648,7 +648,8 @@ def translate_batch_llm_ai(pairs, batch_size=5):
 
     策略（qwen 通道排队波动大：串行 10 条一批会被单个慢请求拖死）：
     - 小批量（默认 5 条）：单请求 completion 减半，出队 + 生成更快；
-    - 批次并行（4 worker，受 _DEEPSEEK_SEMAPHORE 限流）：一批卡住不挡其他批；
+    - 批次并行（3 worker，受 _DEEPSEEK_SEMAPHORE 限流）：一批卡住不挡其他批；
+      通道最大并发 4，客户端只占 3，留 1 路给重试和网关侧其他调用；
     - 流式 + 每批重试 1 次：排队多为 transient，重排常能秒过；
     单批失败只影响该批（保留英文），其余批次照常；调用方对漏项再逐条回退。
     """
@@ -680,7 +681,7 @@ def translate_batch_llm_ai(pairs, batch_size=5):
                             (row.get("summary") or "").strip())
         return mapping, len(batch)
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         futs = {ex.submit(_translate_one, i + 1, b): i + 1
                 for i, b in enumerate(batches)}
         for fut in as_completed(futs):
@@ -705,7 +706,7 @@ def _needs_translation(text):
 def translate_items(report, give_up_after=6):
     """英文条目译中文并保留原文；失败回退原文，不中断整体流程。
 
-    优先走自建网关批量翻译（5 条一批、4 路并行、流式），配置缺失或整体失败时才逐条走 MyMemory。
+    优先走自建网关批量翻译（5 条一批、3 路并行、流式），配置缺失或整体失败时才逐条走 MyMemory。
     MyMemory 是免费接口、按 IP 限流：逐条翻 36 条要发 72 次请求，实测必被 429，
     且被限流后每条都要重试到超时（约 17s），几十条能拖十几分钟。
     """
