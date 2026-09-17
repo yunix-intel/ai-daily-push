@@ -105,7 +105,8 @@ gh secret set OPENAI_MODEL_ANALYSIS
 
 ### 财经独占模型（跟 AI 日报隔离，避免并发争抢同一模型触发网关熔断）
 - [x] `OPENAI_MODEL_TRANSLATE_FINANCE` - `gpt-5.6-terra`（短文本 finish=stop，已验证）
-- [x] `OPENAI_MODEL_ANALYSIS_FINANCE` - `gpt-5.6-luna`（JSON 模式 finish=stop，已验证）
+- [x] `OPENAI_MODEL_ANALYSIS_FINANCE` - `gpt-5.6-sol`（财经要求更高，与 AI 分析对调，2026-09-17）
+  - 注：对调后 AI 分析（`OPENAI_MODEL_ANALYSIS`）= `gpt-5.6-luna`；两者均为已验证 finish=stop 的模型
 - deepseek-v4.1-flash / qwen3.8-27b 实测为推理型输出：photo budget 被 reasoning 吃光、
 - content 为空导致批量解析失败触发熔断，不可用于财经批量链路，特此记录避坑。
 - 隔离是否生效看日志 `[LLM配置]` 里的 `翻译模型:` / `分析模型:` 行（AI 日报看它的 `[LLM配置]` 一行）
