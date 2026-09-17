@@ -868,6 +868,10 @@ def call_llm_json(system_prompt, user_prompt, retries=None, model=None, timeout=
                 headers={
                     "Content-Type": "application/json; charset=utf-8",
                     "Authorization": f"Bearer {api_key}",
+                    # 部分网关模型（如 muse-spark）缺该头会被路由层 400 拒掉
+                    #（MissingSessionID）。值从 X_OPENCODE_SESSION 取，未配置则不带。
+                    **({"x-opencode-session": os.environ["X_OPENCODE_SESSION"]}
+                       if os.environ.get("X_OPENCODE_SESSION") else {}),
                 },
             )
             with semaphore:
@@ -919,6 +923,10 @@ def call_llm_text(system_prompt, user_prompt, retries=None, model=None, timeout=
                 headers={
                     "Content-Type": "application/json; charset=utf-8",
                     "Authorization": f"Bearer {api_key}",
+                    # 部分网关模型（如 muse-spark）缺该头会被路由层 400 拒掉
+                    #（MissingSessionID）。值从 X_OPENCODE_SESSION 取，未配置则不带。
+                    **({"x-opencode-session": os.environ["X_OPENCODE_SESSION"]}
+                       if os.environ.get("X_OPENCODE_SESSION") else {}),
                 },
             )
             with semaphore:

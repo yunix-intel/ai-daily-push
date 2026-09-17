@@ -120,6 +120,8 @@ jobs:
           # 分析 deepseek-v4.1-flash / 翻译 qwen3.8-27b。Secret 未建时回退到共用模型。
           OPENAI_MODEL_TRANSLATE: ${{ secrets.OPENAI_MODEL_TRANSLATE_FINANCE || secrets.OPENAI_MODEL_TRANSLATE }}
           OPENAI_MODEL_ANALYSIS: ${{ secrets.OPENAI_MODEL_ANALYSIS_FINANCE || secrets.OPENAI_MODEL_ANALYSIS }}
+          # 网关部分模型要求带 x-opencode-session 头，否则路由层 400（MissingSessionID）
+          X_OPENCODE_SESSION: ${{ secrets.X_OPENCODE_SESSION }}
           DELIVERY_STATUS_FILE: finance_delivery_status.json
         run: python -u finance_daily_push.py
       - name: 上传财经页面和状态
