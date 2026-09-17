@@ -104,8 +104,8 @@ gh secret set OPENAI_MODEL_ANALYSIS
 - [ ] `OPENAI_MODEL_ANALYSIS` - 未配置将使用默认值 `gpt-5.6-sol`
 
 ### 财经独占模型（跟 AI 日报隔离，避免并发争抢同一模型触发网关熔断）
-- [ ] `OPENAI_MODEL_TRANSLATE_FINANCE` - 建议值 `qwen3.8-27b`；未建时回退到 `OPENAI_MODEL_TRANSLATE`
-- [ ] `OPENAI_MODEL_ANALYSIS_FINANCE` - 已配置为 `muse-spark-1.3`；未建时回退到 `OPENAI_MODEL_ANALYSIS`
+- [x] `OPENAI_MODEL_TRANSLATE_FINANCE` - `deepseek-v4.1-flash`（已验证直连可用，无需 session 头）
+- [x] `OPENAI_MODEL_ANALYSIS_FINANCE` - `deepseek-v4.1-flash`（已验证直连可用，无需 session 头）
 - 隔离是否生效看日志 `[LLM配置]` 里的 `翻译模型:` / `分析模型:` 行（AI 日报看它的 `[LLM配置]` 一行）
 
 ### 其他 Secrets（已配置）
