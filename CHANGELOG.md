@@ -5,6 +5,11 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [4.3.1] - 2026-09-18
+
+### 修复 🐛
+- 盘后抓拍任务加交易日历守门：`capture_money_flow.py` 启动即查 `get_trading_status`，非交易日（节假日/周末）直接 `CAPTURE_SKIP` 返回 2，不调东财接口、不碰缓存。背景：cron 的 `1-5` 只能排除周六日，落在工作日的节假日之前会空跑一次；workflow 侧已把退出码 2 转为 warning，不标红。
+
 ## [4.3.0] - 2026-09-18
 
 ### 变更 ⚙️

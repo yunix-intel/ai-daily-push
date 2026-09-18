@@ -9,6 +9,7 @@
 - 节假日全天无盘时 _clist 返回占位，fetch_* 内部判定 available=False
   即不落盘，旧快照靠严格同日期 gate 自然失效，前端显示 reason，不造数。
 """
+import datetime
 import os
 import sys
 
@@ -17,9 +18,18 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "scrapers"))
 
 from money_flow_scraper import MoneyFlowScraper
+from trading_calendar import get_trading_status
 
 
 def main():
+    today = datetime.date.today()
+    status = get_trading_status(today, market='A')
+    if not status.get('is_trading_day'):
+        # 假日/周末：cron 只能排除周末，落在工作日的节假日靠这里拦截。
+        # 返回 2 与占位日同语义：workflow 记 warning，不标红、不更新缓存。
+        print(f"CAPTURE_SKIP: non-trading day {today} "
+              f"({status.get('market_status')}), cache untouched")
+        return 2
     scraper = MoneyFlowScraper()
     sector = scraper.fetch_sector_flow(top_n=5)
     stock = scraper.fetch_stock_flow(top_n=10)
