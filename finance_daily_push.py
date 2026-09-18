@@ -1235,6 +1235,15 @@ ANALYSIS_FALLBACK = {
     "macro": "",
     "sector": "",
 }
+# 非交易日（周六/节假日）故意跳过分析时的占位：与 ANALYSIS_FALLBACK 区分开，
+# 日志和页面都能一眼看出是“按设计不分析”，而不是“分析失败了”。
+WEEKEND_ANALYSIS_PLACEHOLDER = {
+    "ok": False,
+    "emergencyEvents": [],
+    "summary": "今日休市，未生成市场分析；下方要闻列表仍为完整抓取结果。",
+    "macro": "",
+    "sector": "",
+}
 STRATEGY_FALLBACK = {
     "ok": False,
     "aShare": "",
@@ -1658,7 +1667,10 @@ def build_finance_markdown(data, dashboard_url):
                 parts.append(f"{inflow[0].get('name', '')} {inflow[0].get('net_inflow', 0):+.2f}亿")
             if outflow:
                 parts.append(f"{outflow[0].get('name', '')} {outflow[0].get('net_inflow', 0):+.2f}亿")
-            flow_lines.append(f"{label}资金流向最强/最弱：{'；'.join(parts)}")
+            suffix = ""
+            if flow.get("stale"):
+                suffix = f"（截至上一交易日 {flow.get('trade_date') or flow.get('date') or ''}终值）"
+            flow_lines.append(f"{label}资金流向最强/最弱：{'；'.join(parts)}{suffix}")
         elif flow.get("reason") or flow.get("error"):
             flow_lines.append(f"{label}资金：{flow.get('reason') or flow.get('error')}")
     north = money_flow.get("north_flow") or {}
@@ -1799,8 +1811,20 @@ def main():
         print(f"     [!] 行情抓取失败，继续执行：{exc!r}")
 
     print("[1.5/6] 抓取资金流向数据 ...")
+    # 非交易日（周六/节假日）：整块资金流都不抓取、不展示——全量内容分析
+    # 只在周一/节后首个交易日做（用户要求）。页面仅留要闻列表与休市提示。
+    skip_money_non_trading = (
+        get_trading_status(date.today(), market='A').get('market_status') in ('weekend', 'holiday')
+    )
+
+    class _NonTradingSkip(Exception):
+        pass
+
     money_flow_data = None
     try:
+        if skip_money_non_trading:
+            print("     跳过：非交易日不抓取资金流（周一/节后首日恢复全量）")
+            raise _NonTradingSkip()
         from scrapers.money_flow_scraper import MoneyFlowScraper
         scraper = MoneyFlowScraper()
 
@@ -1844,10 +1868,12 @@ def main():
 
         if sector_flow and sector_flow.get('top_inflow'):
             print(f"     行业流入 Top 1：{sector_flow['top_inflow'][0].get('name', 'N/A')}"
-                  f"（{sector_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）")
+                  f"（{sector_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）"
+                  f"{' [截至上一交易日 ' + str(sector_flow.get('trade_date') or '') + '终值]' if sector_flow.get('stale') else ''}")
         if stock_flow and stock_flow.get('top_inflow'):
             print(f"     个股流入 Top 1：{stock_flow['top_inflow'][0].get('name', 'N/A')}"
-                  f"（{stock_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）")
+                  f"（{stock_flow['top_inflow'][0].get('net_inflow', 0):+.2f} 亿）"
+                  f"{' [截至上一交易日 ' + str(stock_flow.get('trade_date') or '') + '终值]' if stock_flow.get('stale') else ''}")
         if north_flow and north_flow.get('available') \
                 and north_flow.get('total_turnover') is not None:
             print(f"     北向成交总额：{north_flow.get('total_turnover', 0):.2f} 亿"
@@ -1857,6 +1883,13 @@ def main():
         elif north_flow and (north_flow.get('reason') or north_flow.get('error')):
             print(f"     北向资金暂不可用：{north_flow.get('reason') or north_flow.get('error')}")
 
+    except _NonTradingSkip:
+        money_flow_data = {
+            "sector_flow": {},
+            "stock_flow": {},
+            "north_flow": {},
+            "north_history": [],
+        }
     except ImportError as e:
         print(f"     [ERROR] 资金流向模块导入失败：{e}")
         print(f"            请检查 requirements.txt 是否包含 beautifulsoup4")
@@ -2035,6 +2068,17 @@ def main():
 
     print("[3/5] LLM 生成市场分析（国内 + 国际）...")
 
+    # 非交易日（周六/节假日）是特殊日：当日无盘可析，不做 LLM 市场分析。
+    # 省两次调用成本，结论也不会无所指；页面分析区显示休市占位文案。
+    # 策略区不受影响——仍走 generate_strategy 拿静态休市提示（见下）。
+    # 注意：节后首个交易日 market_status 已回到交易日，分析照常跑。
+    trading_status_pre = get_trading_status(date.today(), market='A')
+    skip_analysis_non_trading = (
+        trading_status_pre.get('market_status') in ('weekend', 'holiday')
+    )
+    if skip_analysis_non_trading:
+        print("     跳过：非交易日不生成市场分析（页面显示休市提示）")
+
     def _analysis_with_fallback(items, label):
         if not items:
             return dict(ANALYSIS_FALLBACK), False
@@ -2049,21 +2093,27 @@ def main():
 
     analysis_jobs = {}
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="market-analysis") as executor:
-        if items_domestic:
-            analysis_jobs["domestic"] = executor.submit(
-                _analysis_with_fallback, items_domestic, "国内"
-            )
-        if items_international:
-            analysis_jobs["international"] = executor.submit(
-                _analysis_with_fallback, items_international, "国际"
-            )
+        if not skip_analysis_non_trading:
+            if items_domestic:
+                analysis_jobs["domestic"] = executor.submit(
+                    _analysis_with_fallback, items_domestic, "国内"
+                )
+            if items_international:
+                analysis_jobs["international"] = executor.submit(
+                    _analysis_with_fallback, items_international, "国际"
+                )
         domestic_result = analysis_jobs.get("domestic")
         international_result = analysis_jobs.get("international")
+        # 非交易日用休市占位，交易日无条目沿用原失败占位（行为不变）。
+        no_result_fallback = (
+            WEEKEND_ANALYSIS_PLACEHOLDER if skip_analysis_non_trading
+            else ANALYSIS_FALLBACK
+        )
         analysis_domestic, analysis_domestic_ok = (
-            domestic_result.result() if domestic_result else (dict(ANALYSIS_FALLBACK), False)
+            domestic_result.result() if domestic_result else (dict(no_result_fallback), False)
         )
         analysis_international, analysis_international_ok = (
-            international_result.result() if international_result else (dict(ANALYSIS_FALLBACK), False)
+            international_result.result() if international_result else (dict(no_result_fallback), False)
         )
 
     print("[4/5] LLM 生成 A股/港股策略建议 ...")
@@ -2077,8 +2127,10 @@ def main():
     if is_post_holiday_session(trading_status):
         print(f"     节后/休市后首日：距上一交易日 {trading_status['days_since_last_trading']} 天")
 
-    # 策略需要综合国内外分析
-    if analysis_domestic_ok or analysis_international_ok:
+    # 策略需要综合国内外分析。非交易日分析被故意跳过，但策略仍要走
+    # generate_strategy 拿静态休市提示（该分支无 LLM 调用），不能掉进
+    # 通用 STRATEGY_FALLBACK，否则页面会显示“策略分析未生成”而不是休市提示。
+    if analysis_domestic_ok or analysis_international_ok or skip_analysis_non_trading:
         try:
             # 合并两个市场的分析结论作为策略生成的输入
             combined_analysis = {

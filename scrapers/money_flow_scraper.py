@@ -32,6 +32,14 @@ class MoneyFlowScraper:
         self.cache_path = Path(os.environ.get(
             "MONEY_FLOW_CACHE", "data/market_data/money_flow_north.json"
         ))
+        # 行业/个股榜单缓存：data/market_data 整目录已被 daily.yml actions/cache
+        # 逐日累积，新文件无需改 workflow 即可持久化。
+        self.sector_cache_path = Path(os.environ.get(
+            "MONEY_FLOW_SECTOR_CACHE", "data/market_data/money_flow_sector.json"
+        ))
+        self.stock_cache_path = Path(os.environ.get(
+            "MONEY_FLOW_STOCK_CACHE", "data/market_data/money_flow_stock.json"
+        ))
 
     def _load_cached_north(self, target_date):
         """Return the newest valid cached session not later than target_date."""
@@ -100,6 +108,63 @@ class MoneyFlowScraper:
             # Cache persistence is best effort; a live observation must still
             # be returned when the runner filesystem is read-only.
             return
+
+    @staticmethod
+    def _save_rank_cache(path, record):
+        """Persist a successful sector/stock ranking snapshot keyed by date."""
+        if not isinstance(record, dict) or not record.get("available"):
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            records = existing if isinstance(existing, list) else [existing]
+        except (OSError, json.JSONDecodeError, TypeError):
+            records = []
+        trade_date = str(record.get("trade_date") or record.get("date") or "")
+        records = [r for r in records if isinstance(r, dict) and
+                   str(r.get("trade_date") or r.get("date") or "") != trade_date]
+        records.append({k: record.get(k) for k in (
+            "date", "trade_date",
+            "top_inflow", "top_outflow",
+            "available", "collection_mode", "source",
+            "reason", "stale",
+        )})
+        try:
+            path.write_text(
+                json.dumps(records[-30:], ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError:
+            return
+
+    @staticmethod
+    def _load_rank_cache(path, target_date, label):
+        """Return the cached ranking whose trade_date == target_date.
+
+        与北向缓存同一教训（2026-09-16 实证）：只认同日期，宁缺毋滥，
+        绝不把多天前的旧快照当成昨日终值展示。
+        """
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return None
+        records = payload if isinstance(payload, list) else [payload]
+        for record in reversed(records):
+            if not isinstance(record, dict) or not record.get("available"):
+                continue
+            trade_date = str(record.get("trade_date") or record.get("date") or "")
+            if trade_date != str(target_date):
+                continue
+            if not (record.get("top_inflow") or record.get("top_outflow")):
+                continue
+            item = dict(record)
+            item["stale"] = True
+            item["collection_mode"] = "cached_close"
+            item["reason"] = (
+                f"盘前实时数据不可用，显示截至上一交易日 {trade_date} 的终值"
+            )
+            return item
+        return None
 
     def get_turnover_history(self, days=30):
         """北向成交总额历史序列（页面曲线用）：读本地缓存，只收有效总额点。
@@ -370,18 +435,45 @@ class MoneyFlowScraper:
         valid_inflow = self._valid_rank_rows(inflow[:top_n])
         valid_outflow = self._valid_rank_rows(outflow[:top_n])
         available = bool(valid_inflow or valid_outflow)
+        if available:
+            # 盘中/盘后实时快照：落盘，供次日盘前回退为昨日终值。
+            record = {
+                "date": today,
+                "trade_date": today,
+                "top_inflow": [self._shape_flow(x) for x in valid_inflow],
+                "top_outflow": [self._shape_flow(x) for x in valid_outflow],
+                "available": True,
+                "collection_mode": "realtime",
+                "source": "eastmoney_clist",
+                "reason": "",
+                "stale": False,
+            }
+            self._save_rank_cache(self.sector_cache_path, record)
+            return record
+        # 实时无效（典型为盘前占位）：回退昨日终值缓存，严格同上一交易日。
+        # 注意：_resolve_target_date 必须无参调用才会走交易日历；
+        # 显式传入今天会原样返回当天，缓存就永远对不上日期。
+        target = self._resolve_target_date()
+        cached = self._load_rank_cache(self.sector_cache_path, target, "行业")
+        if cached:
+            print(f"     [INFO] 行业资金流向盘前占位，回退截至上一交易日 {target} 的终值")
+            return cached
         reason = ""
-        if (inflow or outflow) and not available:
+        if inflow or outflow:
             reason = "东方财富返回盘前占位或无效行业资金数据"
-        elif not available:
+        else:
             reason = "; ".join(errors) or "行业资金数据暂不可用"
         return {
             "date": today,
-            "top_inflow": [self._shape_flow(x) for x in valid_inflow],
-            "top_outflow": [self._shape_flow(x) for x in valid_outflow],
-            "available": available,
+            "trade_date": None,
+            "top_inflow": [],
+            "top_outflow": [],
+            "available": False,
+            "collection_mode": "realtime",
+            "source": "eastmoney_clist",
             "error": "; ".join(errors),
             "reason": reason,
+            "stale": False,
         }
 
     def fetch_stock_flow(self, top_n=10):
@@ -401,12 +493,35 @@ class MoneyFlowScraper:
             valid_inflow = self._valid_rank_rows(inflow[:top_n])
             valid_outflow = self._valid_rank_rows(outflow[:top_n])
             available = bool(valid_inflow or valid_outflow)
+            if available:
+                record = {
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "trade_date": datetime.now().strftime("%Y-%m-%d"),
+                    "top_inflow": [self._shape_flow(x, with_code=True) for x in valid_inflow],
+                    "top_outflow": [self._shape_flow(x, with_code=True) for x in valid_outflow],
+                    "available": True,
+                    "collection_mode": "realtime",
+                    "source": "eastmoney_clist",
+                    "reason": "",
+                    "stale": False,
+                }
+                self._save_rank_cache(self.stock_cache_path, record)
+                return record
+            target = self._resolve_target_date()
+            cached = self._load_rank_cache(self.stock_cache_path, target, "个股")
+            if cached:
+                print(f"     [INFO] 个股资金流向盘前占位，回退截至上一交易日 {target} 的终值")
+                return cached
             return {
                 "date": datetime.now().strftime("%Y-%m-%d"),
-                "top_inflow": [self._shape_flow(x, with_code=True) for x in valid_inflow],
-                "top_outflow": [self._shape_flow(x, with_code=True) for x in valid_outflow],
-                "available": available,
-                "reason": "" if available else "东方财富返回盘前占位或无效个股资金数据",
+                "trade_date": None,
+                "top_inflow": [],
+                "top_outflow": [],
+                "available": False,
+                "collection_mode": "realtime",
+                "source": "eastmoney_clist",
+                "reason": "东方财富返回盘前占位或无效个股资金数据",
+                "stale": False,
             }
         except Exception as e:
             print(f"     [WARN] 个股资金流向获取失败: {e}")
@@ -512,16 +627,28 @@ class MoneyFlowScraper:
         """返回空的行业资金流向数据"""
         return {
             "date": datetime.now().strftime("%Y-%m-%d"),
+            "trade_date": None,
             "top_inflow": [],
-            "top_outflow": []
+            "top_outflow": [],
+            "available": False,
+            "collection_mode": "realtime",
+            "source": "eastmoney_clist",
+            "reason": "行业资金数据暂不可用",
+            "stale": False,
         }
 
     def _empty_stock_flow(self):
         """返回空的个股资金流向数据"""
         return {
             "date": datetime.now().strftime("%Y-%m-%d"),
+            "trade_date": None,
             "top_inflow": [],
-            "top_outflow": []
+            "top_outflow": [],
+            "available": False,
+            "collection_mode": "realtime",
+            "source": "eastmoney_clist",
+            "reason": "个股资金数据暂不可用",
+            "stale": False,
         }
 
 

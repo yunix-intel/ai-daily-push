@@ -478,6 +478,7 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     if(moneyFlow.sector_flow && (moneyFlow.sector_flow.top_inflow || moneyFlow.sector_flow.top_outflow)) {
       const sf = moneyFlow.sector_flow;
       main+='<div class="block"><h2>🏭 行业资金流向</h2>';
+      if(sf.stale) main+='<div style="color:#b45309;font-size:12px;margin-top:6px">⚠️ 盘前实时数据不可用，显示截至上一交易日 '+esc(sf.trade_date||sf.date||'')+' 的终值</div>';
       if(sf.top_inflow && sf.top_inflow.length > 0) {
         main+='<div class="sub-h">资金净流入 Top 5</div>';
         main+='<div style="margin:10px 0"><table style="width:100%;border-collapse:collapse">';
@@ -562,6 +563,7 @@ function safeUrl(u){try{const p=new URL(u,location.href).protocol;return (p==='h
     if(moneyFlow.stock_flow && (moneyFlow.stock_flow.top_inflow || moneyFlow.stock_flow.top_outflow)) {
       const stf = moneyFlow.stock_flow;
       main+='<div class="block"><h2>📊 个股资金流向</h2>';
+      if(stf.stale) main+='<div style="color:#b45309;font-size:12px;margin-top:6px">⚠️ 盘前实时数据不可用，显示截至上一交易日 '+esc(stf.trade_date||stf.date||'')+' 的终值</div>';
       if(stf.top_inflow && stf.top_inflow.length > 0) {
         main+='<div class="sub-h">主力净流入 Top 10</div>';
         main+='<div style="margin:10px 0"><table style="width:100%;border-collapse:collapse">';

@@ -1,0 +1,37 @@
+name: capture-money-flow
+
+# 工作日收盘后抓拍资金榜终值，供次日 07:00 盘前任务回退展示。
+# 北京时间 15:45 = UTC 07:45（夏令时无影响，A股收盘 15:00 Beijing）。
+# 只抓榜、只写缓存：不推送企业微信、不发 Pages、不提交代码。
+on:
+  schedule:
+    - cron: '45 7 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+      - name: 配置 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: 安装 Python 依赖
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+      - name: 恢复资金榜终值快照
+        uses: actions/cache@v5
+        with:
+          # 与 daily.yml finance-daily 同一 key 前缀：两边读写同一份滚动缓存，
+          # 早任务恢复到本任务上次抓拍的终值。
+          path: data/market_data
+          key: finance-market-data-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            finance-market-data-${{ github.ref_name }}-
+            finance-market-data-
+      - name: 盘后抓拍资金榜
+        # 节假日占位返回码 2：只留 warning，不标红整个 workflow。
+        run: |
+          python -u capture_money_flow.py || { code=$?; if [ $code -eq 2 ]; then echo "::warning::节假日占位日，缓存未更新"; else exit $code; fi; }

@@ -106,6 +106,17 @@ jobs:
           restore-keys: |
             finance-translations-${{ github.ref_name }}-
             finance-translations-
+      # 行业/个股昨日终值回退依赖此缓存。保鲜缺口（见 CHANGELOG [4.3.0]）：
+      # 07:00 任务在盘前、自身填不满缓存；靠 actions/cache 滚动沿用最近一次
+      # 盘中/盘后成功快照，仓库内种子仅作冷启动兜底（严格同日期才命中）。
+      - name: 恢复资金榜终值快照
+        uses: actions/cache@v5
+        with:
+          path: data/market_data
+          key: finance-market-data-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            finance-market-data-${{ github.ref_name }}-
+            finance-market-data-
       - name: 财经日报
         env:
           WECOM_WEBHOOK: ${{ secrets.FINANCE_WECOM_WEBHOOK || secrets.WECOM_WEBHOOK }}

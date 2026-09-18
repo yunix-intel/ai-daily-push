@@ -395,6 +395,39 @@ def test_push_standalone_contract():
     print("[PASS] Push landing pages are navigation-free and card-linked")
 
 
+def test_finance_money_flow_stale_close_contract():
+    """盘前占位回退昨日终值：数字进 HTML 和微信正文，且必须带
+    “截至上一交易日”标注，不许把旧数当实时数展示。"""
+    money_flow = {
+        "sector_flow": {
+            "date": "2026-09-18", "trade_date": "2026-09-17",
+            "top_inflow": [{"name": "半导体", "net_inflow": 12.34, "change_pct": 2.1}],
+            "top_outflow": [{"name": "银行", "net_inflow": -5.43, "change_pct": -0.5}],
+            "available": True, "collection_mode": "cached_close",
+            "source": "eastmoney_clist", "stale": True,
+            "reason": "盘前实时数据不可用，显示截至上一交易日 2026-09-17 的终值",
+        },
+        "stock_flow": {"top_inflow": [], "top_outflow": [],
+                       "available": False, "trade_date": None,
+                       "reason": "东方财富返回盘前占位或无效个股资金数据",
+                       "stale": False},
+        "north_flow": {"available": False, "trade_date": None,
+                       "reason": "节假日休市，交易所未发布盘后成交数据"},
+    }
+    data = shape_finance([], [], {}, {}, {}, {}, money_flow_data=money_flow)
+    html = build_finance_html(data)
+    assert_true("半导体" in html and "12.34" in html,
+                "stale sector close numbers are missing from finance HTML")
+    assert_true("截至上一交易日" in html and "2026-09-17" in html,
+                "stale close label is missing from finance HTML")
+    body, _ = build_finance_markdown(data, "")
+    assert_true("半导体" in body and "12.34" in body,
+                "stale sector close numbers are missing from Markdown body")
+    assert_true("截至上一交易日" in body and "2026-09-17" in body,
+                "stale close label is missing from Markdown body")
+    print("[PASS] Stale close fallback numbers and labels reach HTML and Markdown")
+
+
 def main():
     tests = [
         test_ai_translation_contract,
@@ -404,6 +437,7 @@ def main():
         test_finance_twitter_failure_contract,
         test_finance_money_flow_north_turnover_contract,
         test_finance_money_flow_north_unavailable_contract,
+        test_finance_money_flow_stale_close_contract,
         test_ai_token_usage_contract,
         test_finance_strategy_fallback_contract,
         test_scraper_status_contracts,
