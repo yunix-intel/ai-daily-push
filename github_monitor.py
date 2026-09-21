@@ -220,8 +220,7 @@ class GitHubMonitor:
             "average_delay_seconds": average(dispatches),
             "max_delay_seconds": max(dispatches, default=0),
             "delays": sorted(scheduled, key=lambda item: (
-                item["dispatch_delay_seconds"] is not None,
-                item["dispatch_delay_seconds"] or 0,
+                item.get("scheduled_at") or item.get("created_at") or "",
             ), reverse=True),
             "manual": manual,
         }

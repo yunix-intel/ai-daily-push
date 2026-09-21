@@ -1572,6 +1572,9 @@ def derive_push_dashboard_url(dashboard_url):
             return url[: -len(full)] + push
     if url.lower().endswith(".html"):
         return url[:-len(".html")] + "_push_standalone.html"
+    if url.endswith("/"):
+        # 站点根式地址兜底：补本报表的无导航落地页（正常配置走不到这里）。
+        return url + "finance_push_standalone.html"
     return url
 
 

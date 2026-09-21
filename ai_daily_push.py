@@ -1641,6 +1641,9 @@ def derive_push_dashboard_url(dashboard_url):
             return url[: -len(full)] + push
     if url.lower().endswith(".html"):
         return url[:-len(".html")] + "_push_standalone.html"
+    if url.endswith("/"):
+        # 站点根式地址（AI 日报主页即站点根，无文件名可推导）：补无导航落地页。
+        return url + "ai_push_standalone.html"
     return url
 
 def safe_md_url(url):

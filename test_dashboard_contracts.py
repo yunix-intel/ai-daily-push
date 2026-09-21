@@ -370,6 +370,15 @@ def test_push_standalone_contract():
     assert_true(derive_push_dashboard_url("https://example.pages.dev/x.html")
                 == "https://example.pages.dev/x_push_standalone.html",
                 "generic .html derivation is wrong")
+    # 生产真实配置就是站点根式（AI 主页即站点根）：必须落到无导航页，
+    # 否则卡片点开就是带三导航的完整仪表盘（2026-09-21 线上实证）。
+    assert_true(derive_push_dashboard_url("https://example.pages.dev/ai-daily-push/")
+                == "https://example.pages.dev/ai-daily-push/ai_push_standalone.html",
+                "AI site-root URL must resolve to the navigation-free landing page")
+    from finance_daily_push import derive_push_dashboard_url as fin_derive
+    assert_true(fin_derive("https://example.pages.dev/ai-daily-push/")
+                == "https://example.pages.dev/ai-daily-push/finance_push_standalone.html",
+                "finance site-root URL must resolve to the navigation-free landing page")
 
     pages_html = build_html(shape({"sections": []}))
     push_html = build_html(shape({"sections": []}), standalone=True)
