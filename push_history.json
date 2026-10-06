@@ -716,5 +716,22 @@
     "actual_time": "01:51:46",
     "actual_time_bj": "2026-10-05 09:51:46 (北京时间)",
     "expected_time_bj": "2026-10-05 07:00:00 (北京时间)"
+  },
+  {
+    "schema_version": 2,
+    "task": "AI + Finance Daily Push",
+    "scheduled_at": "2026-10-05T23:00:00+00:00",
+    "event_created_at": null,
+    "runner_started_at": "2026-10-06T02:44:06+00:00",
+    "delivery_completed_at": "2026-10-06T02:53:10.871380+00:00",
+    "pipeline_completed_at": null,
+    "timestamp": "2026-10-06T02:53:10.871380+00:00",
+    "expected_time": "2026-10-05T23:00:00+00:00",
+    "delay_seconds": 13990.87138,
+    "delay_minutes": 233.2,
+    "date": "2026-10-06",
+    "actual_time": "02:53:10",
+    "actual_time_bj": "2026-10-06 10:53:10 (北京时间)",
+    "expected_time_bj": "2026-10-06 07:00:00 (北京时间)"
   }
 ]
