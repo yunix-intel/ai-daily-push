@@ -87,11 +87,11 @@
 
         <div class="metrics">
             <div class="metric">
-                <div class="metric-value">77</div>
+                <div class="metric-value">78</div>
                 <div class="metric-label">总推送次数</div>
             </div>
             <div class="metric">
-                <div class="metric-value">190.2分</div>
+                <div class="metric-value">190.5分</div>
                 <div class="metric-label">平均延迟</div>
             </div>
             <div class="metric">
@@ -121,6 +121,13 @@
             </thead>
             <tbody>
                 
+                <tr>
+                    <td>2026-11-07</td>
+                    <td>10:35:33</td>
+                    <td>07:00:00</td>
+                    <td class="delay-high">215.6 分钟</td>
+                </tr>
+            
                 <tr>
                     <td>2026-11-06</td>
                     <td>11:16:40</td>
@@ -324,23 +331,16 @@
                     <td class="delay-high">230.8 分钟</td>
                 </tr>
             
-                <tr>
-                    <td>2026-10-08</td>
-                    <td>10:38:42</td>
-                    <td>07:00:00</td>
-                    <td class="delay-high">218.7 分钟</td>
-                </tr>
-            
             </tbody>
         </table>
 
         <p style="margin-top: 30px; color: #666; font-size: 14px;">
-            最后更新: 2026-11-06 11:16:54 (北京时间)
+            最后更新: 2026-11-07 10:35:49 (北京时间)
         </p>
     </div>
 
     <script>
-        const chartData = [{"date": "2026-10-08", "delay": 218.7}, {"date": "2026-10-09", "delay": 230.8}, {"date": "2026-10-10", "delay": 204.7}, {"date": "2026-10-11", "delay": 172.0}, {"date": "2026-10-12", "delay": 201.6}, {"date": "2026-10-13", "delay": 274.3}, {"date": "2026-10-14", "delay": 161.7}, {"date": "2026-10-15", "delay": 139.0}, {"date": "2026-10-16", "delay": 123.5}, {"date": "2026-10-17", "delay": 130.3}, {"date": "2026-10-18", "delay": 103.8}, {"date": "2026-10-19", "delay": 115.6}, {"date": "2026-10-20", "delay": 158.4}, {"date": "2026-10-21", "delay": 143.8}, {"date": "2026-10-22", "delay": 140.4}, {"date": "2026-10-23", "delay": 139.1}, {"date": "2026-10-24", "delay": 155.5}, {"date": "2026-10-25", "delay": 117.2}, {"date": "2026-10-26", "delay": 122.5}, {"date": "2026-10-27", "delay": 176.7}, {"date": "2026-10-28", "delay": 184.0}, {"date": "2026-10-29", "delay": 192.7}, {"date": "2026-10-30", "delay": 206.8}, {"date": "2026-10-31", "delay": 194.0}, {"date": "2026-11-01", "delay": 177.2}, {"date": "2026-11-02", "delay": 190.5}, {"date": "2026-11-03", "delay": 292.2}, {"date": "2026-11-04", "delay": 236.8}, {"date": "2026-11-05", "delay": 257.2}, {"date": "2026-11-06", "delay": 256.7}];
+        const chartData = [{"date": "2026-10-09", "delay": 230.8}, {"date": "2026-10-10", "delay": 204.7}, {"date": "2026-10-11", "delay": 172.0}, {"date": "2026-10-12", "delay": 201.6}, {"date": "2026-10-13", "delay": 274.3}, {"date": "2026-10-14", "delay": 161.7}, {"date": "2026-10-15", "delay": 139.0}, {"date": "2026-10-16", "delay": 123.5}, {"date": "2026-10-17", "delay": 130.3}, {"date": "2026-10-18", "delay": 103.8}, {"date": "2026-10-19", "delay": 115.6}, {"date": "2026-10-20", "delay": 158.4}, {"date": "2026-10-21", "delay": 143.8}, {"date": "2026-10-22", "delay": 140.4}, {"date": "2026-10-23", "delay": 139.1}, {"date": "2026-10-24", "delay": 155.5}, {"date": "2026-10-25", "delay": 117.2}, {"date": "2026-10-26", "delay": 122.5}, {"date": "2026-10-27", "delay": 176.7}, {"date": "2026-10-28", "delay": 184.0}, {"date": "2026-10-29", "delay": 192.7}, {"date": "2026-10-30", "delay": 206.8}, {"date": "2026-10-31", "delay": 194.0}, {"date": "2026-11-01", "delay": 177.2}, {"date": "2026-11-02", "delay": 190.5}, {"date": "2026-11-03", "delay": 292.2}, {"date": "2026-11-04", "delay": 236.8}, {"date": "2026-11-05", "delay": 257.2}, {"date": "2026-11-06", "delay": 256.7}, {"date": "2026-11-07", "delay": 215.6}];
 
         const ctx = document.getElementById('delayChart').getContext('2d');
         new Chart(ctx, {
