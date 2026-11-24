@@ -91,7 +91,7 @@
                 <div class="metric-label">总推送次数</div>
             </div>
             <div class="metric">
-                <div class="metric-value">213.2分</div>
+                <div class="metric-value">216.5分</div>
                 <div class="metric-label">平均延迟</div>
             </div>
             <div class="metric">
@@ -121,6 +121,13 @@
             </thead>
             <tbody>
                 
+                <tr>
+                    <td>2026-11-24</td>
+                    <td>14:49:03</td>
+                    <td>07:00:00</td>
+                    <td class="delay-high">469.1 分钟</td>
+                </tr>
+            
                 <tr>
                     <td>2026-11-23</td>
                     <td>11:34:56</td>
@@ -324,23 +331,16 @@
                     <td class="delay-high">192.7 分钟</td>
                 </tr>
             
-                <tr>
-                    <td>2026-10-28</td>
-                    <td>10:04:01</td>
-                    <td>07:00:00</td>
-                    <td class="delay-high">184.0 分钟</td>
-                </tr>
-            
             </tbody>
         </table>
 
         <p style="margin-top: 30px; color: #666; font-size: 14px;">
-            最后更新: 2026-11-23 11:35:18 (北京时间)
+            最后更新: 2026-11-24 14:49:22 (北京时间)
         </p>
     </div>
 
     <script>
-        const chartData = [{"date": "2026-10-28", "delay": 184.0}, {"date": "2026-10-29", "delay": 192.7}, {"date": "2026-10-30", "delay": 206.8}, {"date": "2026-10-31", "delay": 194.0}, {"date": "2026-11-01", "delay": 177.2}, {"date": "2026-11-02", "delay": 190.5}, {"date": "2026-11-03", "delay": 292.2}, {"date": "2026-11-04", "delay": 236.8}, {"date": "2026-11-05", "delay": 257.2}, {"date": "2026-11-06", "delay": 256.7}, {"date": "2026-11-07", "delay": 215.6}, {"date": "2026-11-08", "delay": 187.0}, {"date": "2026-11-09", "delay": 207.1}, {"date": "2026-11-10", "delay": 332.0}, {"date": "2026-11-11", "delay": 215.4}, {"date": "2026-11-11", "delay": 431.7}, {"date": "2026-11-11", "delay": 443.1}, {"date": "2026-11-11", "delay": 450.0}, {"date": "2026-11-12", "delay": 283.3}, {"date": "2026-11-13", "delay": 257.3}, {"date": "2026-11-14", "delay": 236.6}, {"date": "2026-11-15", "delay": 207.5}, {"date": "2026-11-16", "delay": 216.8}, {"date": "2026-11-17", "delay": 359.1}, {"date": "2026-11-18", "delay": 304.5}, {"date": "2026-11-19", "delay": 300.4}, {"date": "2026-11-20", "delay": 294.2}, {"date": "2026-11-21", "delay": 289.4}, {"date": "2026-11-22", "delay": 232.6}, {"date": "2026-11-23", "delay": 274.9}];
+        const chartData = [{"date": "2026-10-29", "delay": 192.7}, {"date": "2026-10-30", "delay": 206.8}, {"date": "2026-10-31", "delay": 194.0}, {"date": "2026-11-01", "delay": 177.2}, {"date": "2026-11-02", "delay": 190.5}, {"date": "2026-11-03", "delay": 292.2}, {"date": "2026-11-04", "delay": 236.8}, {"date": "2026-11-05", "delay": 257.2}, {"date": "2026-11-06", "delay": 256.7}, {"date": "2026-11-07", "delay": 215.6}, {"date": "2026-11-08", "delay": 187.0}, {"date": "2026-11-09", "delay": 207.1}, {"date": "2026-11-10", "delay": 332.0}, {"date": "2026-11-11", "delay": 215.4}, {"date": "2026-11-11", "delay": 431.7}, {"date": "2026-11-11", "delay": 443.1}, {"date": "2026-11-11", "delay": 450.0}, {"date": "2026-11-12", "delay": 283.3}, {"date": "2026-11-13", "delay": 257.3}, {"date": "2026-11-14", "delay": 236.6}, {"date": "2026-11-15", "delay": 207.5}, {"date": "2026-11-16", "delay": 216.8}, {"date": "2026-11-17", "delay": 359.1}, {"date": "2026-11-18", "delay": 304.5}, {"date": "2026-11-19", "delay": 300.4}, {"date": "2026-11-20", "delay": 294.2}, {"date": "2026-11-21", "delay": 289.4}, {"date": "2026-11-22", "delay": 232.6}, {"date": "2026-11-23", "delay": 274.9}, {"date": "2026-11-24", "delay": 469.1}];
 
         const ctx = document.getElementById('delayChart').getContext('2d');
         new Chart(ctx, {
