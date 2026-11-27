@@ -1,20 +1,6 @@
 [
   {
     "task": "AI Daily Push",
-    "timestamp": "2026-09-08T01:15:29.375600+00:00",
-    "expected_time": "2026-09-07T23:00:00+00:00",
-    "delay_seconds": 8129.3756,
-    "delay_minutes": 135.5,
-    "date": "2026-09-08",
-    "actual_time": "01:15:29",
-    "actual_time_bj": "2026-09-08 09:15:29 (北京时间)",
-    "expected_time_bj": "2026-09-08 07:00:00 (北京时间)",
-    "schema_version": 1,
-    "scheduled_at": "2026-09-07T23:00:00+00:00",
-    "delivery_completed_at": "2026-09-08T01:15:29.375600+00:00"
-  },
-  {
-    "task": "AI Daily Push",
     "timestamp": "2026-09-09T01:17:27.041173+00:00",
     "expected_time": "2026-09-08T23:00:00+00:00",
     "delay_seconds": 8247.041173,
@@ -1519,5 +1505,22 @@
     "actual_time": "04:44:46",
     "actual_time_bj": "2026-11-26 12:44:46 (北京时间)",
     "expected_time_bj": "2026-11-26 07:00:00 (北京时间)"
+  },
+  {
+    "schema_version": 2,
+    "task": "AI + Finance Daily Push",
+    "scheduled_at": "2026-11-26T23:00:00+00:00",
+    "event_created_at": null,
+    "runner_started_at": "2026-11-27T04:49:34+00:00",
+    "delivery_completed_at": "2026-11-27T04:50:45.566580+00:00",
+    "pipeline_completed_at": null,
+    "timestamp": "2026-11-27T04:50:45.566580+00:00",
+    "expected_time": "2026-11-26T23:00:00+00:00",
+    "delay_seconds": 21045.56658,
+    "delay_minutes": 350.8,
+    "date": "2026-11-27",
+    "actual_time": "04:50:45",
+    "actual_time_bj": "2026-11-27 12:50:45 (北京时间)",
+    "expected_time_bj": "2026-11-27 07:00:00 (北京时间)"
   }
 ]
